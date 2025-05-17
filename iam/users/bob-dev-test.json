@@ -1,0 +1,13 @@
+{
+  "Path": "/",
+  "UserName": "bob-dev-test",
+  "UserId": "AIDA5FHXXNYZ4TKHHWSQF",
+  "Arn": "arn:aws:iam::904610147891:user/bob-dev-test",
+  "CreateDate": "2025-05-17 04:16:28+00:00",
+  "Tags": [
+    {
+      "Key": "AKIA5FHXXNYZUJGD7V5M",
+      "Value": "bob-dev-test-key"
+    }
+  ]
+}

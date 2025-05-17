@@ -1,0 +1,14 @@
+{
+  "Path": "/",
+  "UserName": "alice-analyst-test",
+  "UserId": "AIDA5FHXXNYZ4G5ETCRRC",
+  "Arn": "arn:aws:iam::904610147891:user/alice-analyst-test",
+  "CreateDate": "2025-05-17 04:16:28+00:00",
+  "PasswordLastUsed": "2025-05-17 21:04:36+00:00",
+  "Tags": [
+    {
+      "Key": "AKIA5FHXXNYZ6MW5QZPY",
+      "Value": "alice-analyst-test-ak"
+    }
+  ]
+}

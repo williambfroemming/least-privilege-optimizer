@@ -1,0 +1,22 @@
+{
+  "Path": "/aws-service-role/support.amazonaws.com/",
+  "RoleName": "AWSServiceRoleForSupport",
+  "RoleId": "AROA5FHXXNYZWN3MOBZMY",
+  "Arn": "arn:aws:iam::904610147891:role/aws-service-role/support.amazonaws.com/AWSServiceRoleForSupport",
+  "CreateDate": "2025-05-15 04:19:55+00:00",
+  "AssumeRolePolicyDocument": {
+    "Version": "2012-10-17",
+    "Statement": [
+      {
+        "Effect": "Allow",
+        "Principal": {
+          "Service": "support.amazonaws.com"
+        },
+        "Action": "sts:AssumeRole"
+      }
+    ]
+  },
+  "Description": "Enables resource access for AWS to provide billing, administrative and support services",
+  "MaxSessionDuration": 3600,
+  "RoleLastUsed": {}
+}

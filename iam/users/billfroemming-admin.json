@@ -1,0 +1,14 @@
+{
+  "Path": "/",
+  "UserName": "billfroemming-admin",
+  "UserId": "AIDA5FHXXNYZ2G3TLL3NZ",
+  "Arn": "arn:aws:iam::904610147891:user/billfroemming-admin",
+  "CreateDate": "2025-05-15 04:37:45+00:00",
+  "PasswordLastUsed": "2025-05-17 20:33:35+00:00",
+  "Tags": [
+    {
+      "Key": "AKIA5FHXXNYZ56SXKVPP",
+      "Value": "capstone project ak"
+    }
+  ]
+}
