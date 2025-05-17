@@ -43,5 +43,5 @@ iam/
 Log into AWS CLI, then run:
 
 ```bash
-python3 iam/scripts/full_sync_iam.py
+python3 iam/scripts/sync_iam_to_repo.py
 ```
