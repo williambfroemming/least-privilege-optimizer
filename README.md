@@ -25,8 +25,7 @@ A Python script (`iam/scripts/full_sync_iam.py`) connects to the AWS environment
 
 ### 2. Repository Structure
 
-# least-privilege-optimizer
-IAM Folder Strucutre:
+iam Folder Strucutre:
 ```bash
 iam/
 ├── users/             # Metadata for test IAM users
