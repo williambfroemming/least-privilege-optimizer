@@ -27,15 +27,17 @@ A Python script (`iam/scripts/full_sync_iam.py`) connects to the AWS environment
 
 # least-privilege-optimizer
 IAM Folder Strucutre:
+```bash
 iam/
-├── users/ # Metadata for test IAM users
+├── users/             # Metadata for test IAM users
 ├── policies/
-│ ├── aws-managed/ # AWS-managed policy snapshots
-│ └── inline/ # Custom inline policies per user/role/group
-├── groups/ # IAM group definitions
-├── roles/ # IAM role definitions and trust policies
+│   ├── aws-managed/   # AWS-managed policy snapshots
+│   └── inline/        # Custom inline policies per user/role/group
+├── groups/            # IAM group definitions
+├── roles/             # IAM role definitions and trust policies
 └── scripts/
-└── full_sync_iam.py # Main sync script
+    └── full_sync_iam.py  # Main sync script
+```
 
 ## How to Sync AWS and Repository
 
@@ -43,3 +45,4 @@ Log into AWS CLI, then run:
 
 ```bash
 python3 iam/scripts/full_sync_iam.py
+```
