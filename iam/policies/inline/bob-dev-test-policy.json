@@ -8,7 +8,11 @@
     },
     {
       "Effect": "Allow",
-      "Action": ["s3:PutObject", "s3:GetObject", "s3:ListBucket"],
+      "Action": [
+        "s3:PutObject",
+        "s3:GetObject",
+        "s3:ListBucket"
+      ],
       "Resource": [
         "arn:aws:s3:::ucb-capstone-bucket",
         "arn:aws:s3:::ucb-capstone-bucket/*"

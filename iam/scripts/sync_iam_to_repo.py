@@ -30,7 +30,7 @@ def sync_user(user_name):
     inline_policies = iam.list_user_policies(UserName=user_name)['PolicyNames']
     for policy_name in inline_policies:
         policy = iam.get_user_policy(UserName=user_name, PolicyName=policy_name)
-        write_json(os.path.join(INLINE_DIR, f"{user_name}-{policy_name}.json"), policy['PolicyDocument'])
+        write_json(os.path.join(INLINE_DIR, f"{policy_name}.json"), policy['PolicyDocument'])
 
     # Attached Managed Policies
     attached = iam.list_attached_user_policies(UserName=user_name)['AttachedPolicies']
@@ -89,11 +89,25 @@ def fetch_and_save_managed_policy(policy_arn, policy_name):
 def main():
     print("Starting IAM Sync...")
 
+    # Get all users in the Administrators group
+    admin_group_name = "Administrators"
+    try:
+        admin_users = iam.get_group(GroupName=admin_group_name)['Users']
+        admin_usernames = set(u['UserName'] for u in admin_users)
+        print(f"Skipping {len(admin_usernames)} admin users")
+    except iam.exceptions.NoSuchEntityException:
+        print(f"Group '{admin_group_name}' not found — continuing without admin exclusion.")
+        admin_usernames = set()
+
     # USERS
     for user in iam.list_users()['Users']:
-        sync_user(user['UserName'])
+        username = user['UserName']
+        if username in admin_usernames:
+            print(f"Skipping admin user: {username}")
+            continue
+        sync_user(username)
 
-    # GROUPS
+    # GROUPS (optional – still include)
     for group in iam.list_groups()['Groups']:
         sync_group(group['GroupName'])
 
@@ -102,6 +116,7 @@ def main():
         sync_role(role['RoleName'])
 
     print("IAM Sync Complete")
+
 
 
 if __name__ == "__main__":
