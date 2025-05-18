@@ -1,0 +1,10 @@
+# Terraform directories and state files
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl
+
+# Ignore IAM module-level state and lock files if accidentally created
+infra/terraform/iam/.terraform/
+infra/terraform/iam/terraform.tfstate*
+infra/terraform/iam/.terraform.lock.hcl
