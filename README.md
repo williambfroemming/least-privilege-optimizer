@@ -14,18 +14,35 @@ This project is a prototype designed to demonstrate how AWS IAM permissions can 
 
 ## Current Functionality
 
-### 1. IAM Policy Sync
+### 1. Infrastructure-as-Code (IaC)
 
-A Python script (`iam/scripts/full_sync_iam.py`) connects to the AWS environment and:
+The entire AWS environment is now managed using **Terraform**, including:
+
+- S3 buckets (CloudTrail logs, Athena query results, application data)
+- IAM users, roles, groups, and policies
+- GitHub Actions OIDC identity provider
+- Lambda function and execution role
+- CloudTrail configuration (except advanced selectors, which are managed manually)
+
+Terraform remote state is securely stored in an encrypted S3 bucket, with state locking via DynamoDB. This ensures reproducibility, consistency, and safe team collaboration.
+
+---
+
+### 2. IAM Policy Sync (Legacy + Analysis Tooling)
+
+The Python script `iam/scripts/full_sync_iam.py` connects to the AWS environment and:
 
 - Downloads all IAM **users**, **groups**, and **roles**
-- Stores each IAM identity’s **inline** and **attached managed** policies
-- Excludes users in the `Administrators` group (to focus on testable targets)
-- Saves output to a well-structured folder hierarchy under `/iam/`
+- Retrieves each identity’s **inline** and **attached managed** policies
+- Excludes users in the `Administrators` group to avoid modifying real accounts
+- Saves IAM artifacts to a structured, Git-tracked hierarchy under `/iam/`
 
-### 2. Repository Structure
+This supports policy analysis, auditing, and eventual policy optimization.
 
-iam Folder Strucutre:
+---
+
+## Repository Structure
+
 ```bash
 iam/
 ├── users/             # Metadata for test IAM users
