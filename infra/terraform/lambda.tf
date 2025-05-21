@@ -6,8 +6,8 @@ resource "aws_lambda_function" "test_function" {
   timeout       = 15
   memory_size   = 128
 
-    filename         = "${path.module}/../../lambda/test-function.zip"
-    source_code_hash = filebase64sha256("${path.module}/../../lambda/test-function.zip")
+  filename         = "${path.module}/../../lambda/test-function.zip"
+  source_code_hash = filebase64sha256("${path.module}/../../lambda/test-function.zip")
 
   environment {
     variables = {
