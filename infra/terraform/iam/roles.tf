@@ -7,7 +7,7 @@ resource "aws_iam_role" "github_actions_least_privilege" {
       {
         Effect = "Allow",
         Principal = {
-          Federated = "arn:aws:iam::904610147891:oidc-provider/token.actions.githubusercontent.com"
+          Federated = "arn:aws:iam::${var.account_id}:oidc-provider/token.actions.githubusercontent.com"
         },
         Action = "sts:AssumeRoleWithWebIdentity",
         Condition = {
@@ -48,4 +48,19 @@ resource "aws_iam_role" "lambda_basic_execution" {
     Environment = "development"
     ManagedBy   = "terraform"
   }
+}
+
+resource "aws_iam_role" "test_admin" {
+  name = "test-admin"
+  assume_role_policy = data.aws_iam_policy_document.trust_account.json
+}
+
+resource "aws_iam_role" "test_data_engineer" {
+  name = "test-data-engineer"
+  assume_role_policy = data.aws_iam_policy_document.trust_account.json
+}
+
+resource "aws_iam_role" "test_support_analyst" {
+  name = "test-support-analyst"
+  assume_role_policy = data.aws_iam_policy_document.trust_account.json
 }

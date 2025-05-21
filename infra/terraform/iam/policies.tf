@@ -75,3 +75,14 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
     ]
   })
 }
+
+data "aws_iam_policy_document" "trust_account" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${var.account_id}:root"]
+    }
+  }
+}
