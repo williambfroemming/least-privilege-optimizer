@@ -32,8 +32,8 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Resource = "*"
       },
       {
-        Effect   = "Allow",
-        Action   = [
+        Effect = "Allow",
+        Action = [
           "s3:PutObject",
           "s3:GetObject",
           "s3:ListBucket"

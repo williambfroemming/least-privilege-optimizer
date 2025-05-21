@@ -12,7 +12,7 @@ resource "aws_iam_role_policy" "test_data_engineer_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Sid = "DataLakeAccess"
+        Sid    = "DataLakeAccess"
         Effect = "Allow"
         Action = [
           "s3:*",
@@ -23,7 +23,7 @@ resource "aws_iam_role_policy" "test_data_engineer_policy" {
         Resource = "*"
       },
       {
-        Sid = "EC2AdminForTesting"
+        Sid    = "EC2AdminForTesting"
         Effect = "Allow"
         Action = [
           "ec2:Describe*",
@@ -47,7 +47,7 @@ resource "aws_iam_role_policy" "test_support_analyst_policy" {
     Version = "2012-10-17",
     Statement = [
       {
-        Sid = "ReadOnlySupport"
+        Sid    = "ReadOnlySupport"
         Effect = "Allow"
         Action = [
           "iam:Get*",
@@ -62,7 +62,7 @@ resource "aws_iam_role_policy" "test_support_analyst_policy" {
         Resource = "*"
       },
       {
-        Sid = "LightEC2Diagnostic"
+        Sid    = "LightEC2Diagnostic"
         Effect = "Allow"
         Action = [
           "ec2:DescribeInstances",

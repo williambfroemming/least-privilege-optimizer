@@ -51,16 +51,16 @@ resource "aws_iam_role" "lambda_basic_execution" {
 }
 
 resource "aws_iam_role" "test_admin" {
-  name = "test-admin"
+  name               = "test-admin"
   assume_role_policy = data.aws_iam_policy_document.trust_account.json
 }
 
 resource "aws_iam_role" "test_data_engineer" {
-  name = "test-data-engineer"
+  name               = "test-data-engineer"
   assume_role_policy = data.aws_iam_policy_document.trust_account.json
 }
 
 resource "aws_iam_role" "test_support_analyst" {
-  name = "test-support-analyst"
+  name               = "test-support-analyst"
   assume_role_policy = data.aws_iam_policy_document.trust_account.json
 }
