@@ -8,3 +8,6 @@
 infra/terraform/iam/.terraform/
 infra/terraform/iam/terraform.tfstate*
 infra/terraform/iam/.terraform.lock.hcl
+
+# Role simulations
+scripts/test.csv
