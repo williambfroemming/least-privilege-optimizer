@@ -41,29 +41,7 @@ This supports policy analysis, auditing, and eventual policy optimization.
 
 ---
 
-## Repository Structure
-
-```bash
-iam/
-├── users/             # Metadata for test IAM users
-├── policies/
-│   ├── aws-managed/   # AWS-managed policy snapshots
-│   └── inline/        # Custom inline policies per user/role/group
-├── groups/            # IAM group definitions
-├── roles/             # IAM role definitions and trust policies
-└── scripts/
-    └── full_sync_iam.py  # Main sync script
-```
-
-## How to Sync AWS and Repository
-
-Log into AWS CLI, then run:
-
-```bash
-python3 iam/scripts/sync_iam_to_repo.py
-```
-
-### 3. Simulated Role Activity
+### 2. Simulated Role Activity
 
 To support least privilege analysis based on actual usage, this project includes a set of scripts under `scripts/` that simulate AWS activity for different IAM roles. These scripts assume their respective roles and perform relevant AWS operations that generate CloudTrail events for analysis.
 
