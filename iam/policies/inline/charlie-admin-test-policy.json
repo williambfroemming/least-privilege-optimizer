@@ -1,5 +1,0 @@
-{
-  "user": "charlie-admin-test",
-  "managed_policies": ["arn:aws:iam::aws:policy/AdministratorAccess"],
-  "inline_policies": []
-}
