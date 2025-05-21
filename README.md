@@ -26,20 +26,7 @@ The entire AWS environment is now managed using **Terraform**, including:
 
 Terraform remote state is securely stored in an encrypted S3 bucket, with state locking via DynamoDB. This ensures reproducibility, consistency, and safe team collaboration.
 
----
-
-### 2. IAM Policy Sync (Legacy + Analysis Tooling)
-
-The Python script `iam/scripts/full_sync_iam.py` connects to the AWS environment and:
-
-- Downloads all IAM **users**, **groups**, and **roles**
-- Retrieves each identity’s **inline** and **attached managed** policies
-- Excludes users in the `Administrators` group to avoid modifying real accounts
-- Saves IAM artifacts to a structured, Git-tracked hierarchy under `/iam/`
-
-This supports policy analysis, auditing, and eventual policy optimization.
-
----
+--
 
 ### 2. Simulated Role Activity
 
