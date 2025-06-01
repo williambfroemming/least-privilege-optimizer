@@ -11,3 +11,8 @@ infra/terraform/iam/.terraform.lock.hcl
 
 # Role simulations
 scripts/test.csv
+
+# Miscellaneous
+.DS_Store
+.vscode/
+.venv/
