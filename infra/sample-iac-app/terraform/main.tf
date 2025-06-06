@@ -2,6 +2,13 @@ provider "aws" {
     region = "us-east-1"
 }
 
+module "iam_parser" {
+  source               = "../../terraform/modules/iam-parser"
+  tf_path              = "../../sample-iac-app"
+  lambda_zip_path      = "../../../lambdas/test/iam-analyzer-engine-test.zip"
+  lambda_function_name = "iam-analyzer-engine-test-deployment"
+}
+
 # S3 bucket to store the React web application
 resource "aws_s3_bucket" "web_app" {
     bucket = "react-web-app-bucket-${random_id.suffix.hex}"
@@ -160,4 +167,11 @@ output "s3_bucket_name" {
 
 output "cloudfront_domain_name" {
     value = aws_cloudfront_distribution.web_app.domain_name
+}
+
+output "iam_scan_output" {
+  value = {
+    bucket = module.iam_parser.iam_s3_bucket
+    latest_key = module.iam_parser.latest_output_key
+  }
 }
