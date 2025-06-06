@@ -23,11 +23,12 @@ def collect_iam_resources(tf_folder):
                 with open(os.path.join(root, file), 'r') as f:
                     try:
                         data = hcl2.load(f)
-                        if "resource" in data:
-                            for res_type, res_defs in data["resource"].items():
-                                if res_type in iam_resources:
-                                    for name in res_defs:
-                                        iam_resources[res_type].append(name)
+                        if "resource" in data and isinstance(data["resource"], list):
+                            for res_block in data["resource"]:
+                                for res_type, res_defs in res_block.items():
+                                    if res_type in iam_resources:
+                                        for name in res_defs:
+                                            iam_resources[res_type].append(name)
                     except Exception:
                         continue
 

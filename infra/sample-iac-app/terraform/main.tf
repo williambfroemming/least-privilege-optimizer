@@ -2,11 +2,34 @@ provider "aws" {
     region = "us-east-1"
 }
 
+# Import our module
 module "iam_parser" {
   source               = "../../terraform/modules/iam-parser"
-  tf_path              = "../../sample-iac-app"
+  tf_path              = "../../sample-iac-app/terraform"
   lambda_zip_path      = "../../../lambdas/test/iam-analyzer-engine-test.zip"
   lambda_function_name = "iam-analyzer-engine-test-deployment"
+}
+
+# Test IAM Resource
+resource "aws_iam_user" "test_user" {
+  name = "static-parser-test-user"
+}
+
+resource "aws_iam_role" "test_role" {
+  name = "static-parser-test-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Action = "sts:AssumeRole",
+        Effect = "Allow",
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
 }
 
 # S3 bucket to store the React web application
