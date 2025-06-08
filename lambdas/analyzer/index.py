@@ -2,8 +2,9 @@ import os
 import json
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from modules.iam_analyzer import AccessAnalyzerWrapper
+from modules.iam_analyzer import Analyzer
 from modules.github_pr import GitHubPRHandler
+from modules.policy_recommender import PolicyRecommender
 
 logger = Logger(service="iam-analyzer")
 
@@ -22,6 +23,7 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
     Expected event format:
     {
         "analyzer_arn": "arn:aws:access-analyzer:region:account:analyzer/name",
+        "bucket_name": "my-bucket-name",  # required for fetching resources
         "pr_title": "Update IAM policies based on analysis",
         "pr_body": "Automated PR for IAM policy updates",
         "base_branch": "main",  # optional
@@ -31,41 +33,37 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
     try:
         validate_environment()
         
+        if 'bucket_name' not in event:
+            raise ValueError("bucket_name is required in the event payload")
+            
         # Initialize clients
-        analyzer = AccessAnalyzerWrapper(region=os.getenv('AWS_REGION'))
+        analyzer = Analyzer(region=os.getenv('AWS_REGION'))
         github_handler = GitHubPRHandler(
             github_token=os.getenv('GITHUB_TOKEN'),
             repo_name=os.getenv('GITHUB_REPO')
         )
+        policy_recommender = PolicyRecommender(
+            github_token=os.getenv('GITHUB_TOKEN'),
+            repo_name=os.getenv('GITHUB_REPO')
+        )
         
-        # Get analyzer findings
-        findings = analyzer.list_findings(event['analyzer_arn'])
-        logger.info(f"Found {len(findings)} items to analyze")
+        # Fetch resources and findings
+        resources = analyzer.fetch_resources_to_analyze(event['bucket_name'])
+        findings = analyzer.list_findings(event['analyzer_arn'], event['bucket_name'])
         
         if not findings:
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "message": "No policy updates required",
+                    "message": "No findings to analyze",
                     "status": "success"
                 })
             }
+            
+        # Process findings and generate recommendations
+        recommendations = policy_recommender.process_findings(findings, resources)
         
-        # Generate policy recommendations
-        policy_changes = {}
-        for finding in findings:
-            if finding.get('resourceType') == 'AWS::IAM::Policy':
-                config = {
-                    'existingPolicyDocument': finding.get('resource', {}).get('policy', {}),
-                    'analyzedPolicyDocument': finding.get('analyzedPolicy', {})
-                }
-                generated_policy = analyzer.generate_policy('IAM', config)
-                
-                # Add to policy changes
-                policy_path = f"policies/{finding['resourceId']}.json"
-                policy_changes[policy_path] = generated_policy
-        
-        if not policy_changes:
+        if not recommendations:
             return {
                 "statusCode": 200,
                 "body": json.dumps({
@@ -73,19 +71,18 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
                     "status": "success"
                 })
             }
-        
-        # Create pull request with changes
-        pr_result = github_handler.create_pull_request(
-            title=event.get('pr_title', 'Update IAM policies based on analysis'),
-            body=event.get('pr_body', 'Automated PR with recommended IAM policy updates'),
-            base_branch=event.get('base_branch', 'main'),
-            head_branch=event.get('head_branch', 'iam-policy-updates'),
-            policy_changes=policy_changes
-        )
+            
+        # Update Terraform configurations
+        update_success = policy_recommender.update_terraform_policies(recommendations)
         
         return {
             "statusCode": 200,
-            "body": json.dumps(pr_result)
+            "body": json.dumps({
+                "message": "Successfully processed findings and generated recommendations",
+                "status": "success" if update_success else "partial_success",
+                "recommendations_count": len(recommendations),
+                "findings_count": len(findings)
+            })
         }
         
     except Exception as e:
