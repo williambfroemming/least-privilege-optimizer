@@ -37,6 +37,7 @@ resource "aws_s3_bucket" "web_app" {
     bucket = "react-web-app-bucket-${random_id.suffix.hex}"
 }
 
+
 resource "random_id" "suffix" {
     byte_length = 4
 }
