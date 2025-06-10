@@ -18,3 +18,10 @@ scripts/test.csv
 .venv/
 .env
 __pycache__
+
+# Module ignores
+lambda/build/
+lambda/iam_analyzer_engine.zip
+lambda/__pycache__/
+terraform/modules/iam-parser/lambda/build/
+terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip

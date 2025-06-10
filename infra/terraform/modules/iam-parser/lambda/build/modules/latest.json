@@ -1,0 +1,29 @@
+{
+  "aws_iam_user": [
+    {
+      "tf_resource_name": "test_user",
+      "name": "static-parser-test-user",
+      "type": "user",
+      "arn": "arn:aws:iam::904610147891:user/static-parser-test-user"
+    },
+    {
+        "tf_resource_name": "test_admin",
+        "name": "static-parser-test-admin",
+        "type": "user",
+        "arn": "arn:aws:iam::904610147891:role/test-admin"
+    }
+  ],
+  "aws_iam_role": [
+    {
+      "tf_resource_name": "test_role",
+      "name": "static-parser-test-role",
+      "type": "role",
+      "arn": "arn:aws:iam::904610147891:role/static-parser-test-role"
+    }
+  ],
+  "aws_iam_group": [],
+  "aws_iam_policy": [],
+  "aws_iam_role_policy_attachment": [],
+  "aws_iam_user_policy_attachment": [],
+  "aws_iam_group_policy_attachment": []
+}

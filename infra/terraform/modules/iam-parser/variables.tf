@@ -1,5 +1,5 @@
 variable "tf_path" {
-  description = "Path to folder containing Terraform files to scan"
+  description = "Path to the Terraform project to be analyzed"
   type        = string
 }
 
@@ -15,13 +15,14 @@ variable "s3_prefix" {
   default     = "iam-parsed"
 }
 
-variable "lambda_zip_path" {
-  description = "../../../lambdas/test/test_lambda_deployment.py"
-  type        = string
-}
-
 variable "lambda_function_name" {
   description = "iam-analyzer-engine-test-deployment"
   type        = string
-  default     = "iam-analyzer-engine-test"
+  default     = "iam-analyzer-engine-tf-deployed"
+}
+
+variable "lambda_timeout" {
+  description = "Timeout for the IAM analyzer Lambda function"
+  type        = number
+  default     = 10
 }

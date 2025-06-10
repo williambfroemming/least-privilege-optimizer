@@ -4,10 +4,8 @@ provider "aws" {
 
 # Import our module
 module "iam_parser" {
-  source               = "../../terraform/modules/iam-parser"
-  tf_path              = "../../sample-iac-app/terraform"
-  lambda_zip_path      = "../../../lambdas/test/iam-analyzer-engine-test.zip"
-  lambda_function_name = "iam-analyzer-engine-test-deployment"
+  source  = "../../terraform/modules/iam-parser"
+  tf_path = "../../sample-iac-app/terraform"
 }
 
 # Test IAM Resource

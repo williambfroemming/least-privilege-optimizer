@@ -11,5 +11,11 @@ output "latest_output_key" {
 }
 
 output "iam_lambda_function_arn" {
-  value = aws_lambda_function.iam_analyzer_test.arn
+  description = "The ARN of the deployed IAM Analyzer Lambda function"
+  value       = aws_lambda_function.iam_analyzer_engine_tf_deployed.arn
+}
+
+output "lambda_function_name" {
+  description = "The name of the deployed IAM Analyzer Lambda function"
+  value       = aws_lambda_function.iam_analyzer_engine_tf_deployed.function_name
 }
