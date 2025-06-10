@@ -25,3 +25,54 @@ lambda/iam_analyzer_engine.zip
 lambda/__pycache__/
 terraform/modules/iam-parser/lambda/build/
 terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
+#--------------------------------------------------
+# Terraform state & lock files
+#--------------------------------------------------
+*.tfstate
+*.tfstate.backup
+*.tfplan
+*.tfvars
+.terraform/
+.terraform.lock.hcl
+
+# Module-level overrides (if local state sneaks in)
+infra/terraform/iam/.terraform/
+infra/terraform/iam/terraform.tfstate*
+infra/terraform/iam/.terraform.lock.hcl
+
+#--------------------------------------------------
+# Lambda build artifacts (zips & build directories)
+#--------------------------------------------------
+terraform/modules/iam-parser/lambda/build/
+terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
+lambda/build/
+lambda/iam_analyzer_engine.zip
+lambda/__pycache__/
+
+#--------------------------------------------------
+# Python environment & cache
+#--------------------------------------------------
+.venv/
+env/
+venv/
+__pycache__/
+*.pyc
+pip-wheel-metadata/
+
+#--------------------------------------------------
+# Local configuration & secrets
+#--------------------------------------------------
+.env
+.env.*
+.DS_Store
+
+#--------------------------------------------------
+# Editor & IDE metadata
+#--------------------------------------------------
+.vscode/
+.idea/
+
+#--------------------------------------------------
+# Test files / temporary outputs
+#--------------------------------------------------
+scripts/test.csv
