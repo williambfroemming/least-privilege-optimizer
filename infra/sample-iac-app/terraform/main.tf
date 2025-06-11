@@ -6,6 +6,18 @@ provider "aws" {
 module "iam_parser" {
   source  = "../../terraform/modules/iam-parser"
   tf_path = "../../sample-iac-app/terraform"
+  
+  # Optional: customize naming
+  s3_prefix             = "iam-analysis"
+  lambda_function_name  = "iam-analyzer"
+  
+  # Optional: add additional tags
+  tags = {
+    Project     = "IAM-Analyzer"
+    ManagedBy   = "Terraform"
+    Environment = "dev"
+    Owner       = "ScopeDown Team"
+  }
 }
 
 # Test IAM Resource

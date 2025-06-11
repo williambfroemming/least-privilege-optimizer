@@ -1,9 +1,13 @@
+# Data sources to get current AWS account ID and region
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 resource "aws_iam_role" "iam_analyzer_lambda_role" {
-  name = "iam-analyzer-lambda-execution-role"
+  name = "${local.name_prefix}-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
-    Statement: [
+    Statement = [
       {
         Effect = "Allow",
         Principal = {
@@ -16,16 +20,16 @@ resource "aws_iam_role" "iam_analyzer_lambda_role" {
 }
 
 resource "aws_iam_policy" "lambda_logging_policy" {
-  name        = "LambdaBasicExecutionLogs"
+  name        = "${local.name_prefix}-logging-policy"
   description = "Allows Lambda to write to CloudWatch Logs"
 
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement: [
+    Statement = [
       {
         Effect = "Allow",
         Action = "logs:CreateLogGroup",
-        Resource = "arn:aws:logs:us-east-1:904610147891:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*"
       },
       {
         Effect = "Allow",
@@ -33,50 +37,64 @@ resource "aws_iam_policy" "lambda_logging_policy" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ],
-        Resource = "arn:aws:logs:us-east-1:904610147891:log-group:/aws/lambda/iam-analyzer-engine:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-${var.lambda_function_name}:*"
       }
     ]
   })
 }
 
-resource "aws_iam_policy" "access_analyzer_permissions" {
-  name        = "AccessAnalyzerPermissions"
-  description = "Permissions for Access Analyzer integration"
+# IMPROVED: More restrictive S3 policy with least privilege
+resource "aws_iam_policy" "lambda_s3_access" {
+  name        = "${local.name_prefix}-s3-access-policy"
+  description = "Allow Lambda to read/write objects in specific S3 prefix only"
 
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement: [
+    Statement = [
       {
-        Sid: "VisualEditor0",
-        Effect: "Allow",
-        Action: [
-          "access-analyzer:ListAnalyzers",
-          "access-analyzer:CheckAccessNotGranted",
-          "access-analyzer:StartPolicyGeneration",
-          "access-analyzer:GetGeneratedPolicy",
-          "access-analyzer:ValidatePolicy",
-          "access-analyzer:CheckNoPublicAccess",
-          "access-analyzer:CancelPolicyGeneration",
-          "access-analyzer:ListPolicyGenerations",
-          "access-analyzer:CheckNoNewAccess"
+        Effect = "Allow",
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject"
         ],
-        Resource: "*"
+        Resource = "${aws_s3_bucket.iam_parser_output.arn}/${var.s3_prefix}/*"
       },
       {
-        Sid: "VisualEditor1",
-        Effect: "Allow",
-        Action: "access-analyzer:*",
-        Resource: "arn:aws:access-analyzer:*:904610147891:analyzer/*"
-      },
-      {
-        Sid: "VisualEditor2",
-        Effect: "Allow",
-        Action: "access-analyzer:*",
-        Resource: "arn:aws:access-analyzer:*:904610147891:analyzer/*/archive-rule/*"
+        Effect = "Allow",
+        Action = "s3:ListBucket",
+        Resource = aws_s3_bucket.iam_parser_output.arn,
+        Condition = {
+          StringLike = {
+            "s3:prefix" = "${var.s3_prefix}/*"
+          }
+        }
       }
     ]
   })
 }
+
+# IMPROVED: More restrictive Access Analyzer permissions
+resource "aws_iam_policy" "access_analyzer_permissions" {
+  name        = "${local.name_prefix}-access-analyzer-policy"
+  description = "Permissions for Access Analyzer integration with least privilege"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "access-analyzer:ListAnalyzers",
+          "access-analyzer:ValidatePolicy",
+          "access-analyzer:CheckAccessNotGranted",
+          "access-analyzer:CheckNoNewAccess"
+        ],
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 
 resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
   role       = aws_iam_role.iam_analyzer_lambda_role.name
@@ -86,29 +104,6 @@ resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
 resource "aws_iam_role_policy_attachment" "access_analyzer_attach" {
   role       = aws_iam_role.iam_analyzer_lambda_role.name
   policy_arn = aws_iam_policy.access_analyzer_permissions.arn
-}
-
-resource "aws_iam_policy" "lambda_s3_access" {
-  name        = "lambda-s3-access"
-  description = "Allow Lambda to read/write objects in the parser output bucket"
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement: [
-      {
-        Effect = "Allow",
-        Action = [
-          "s3:GetObject",
-          "s3:PutObject",
-          "s3:ListBucket"
-        ],
-        Resource = [
-          aws_s3_bucket.iam_parser_output.arn,
-          "${aws_s3_bucket.iam_parser_output.arn}/*"
-        ]
-      }
-    ]
-  })
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_s3_access_attach" {
