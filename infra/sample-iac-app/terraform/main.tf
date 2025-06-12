@@ -7,6 +7,9 @@ module "iam_parser" {
   source  = "../../terraform/modules/iam-parser"
   tf_path = "../../sample-iac-app/terraform"
   
+  # Required variable
+  environment = "dev"
+  
   # Optional: customize naming
   s3_prefix             = "iam-analysis"
   lambda_function_name  = "iam-analyzer"
@@ -203,9 +206,13 @@ output "cloudfront_domain_name" {
     value = aws_cloudfront_distribution.web_app.domain_name
 }
 
+# This output should be in the file that calls the module, not in the module itself
 output "iam_scan_output" {
+  description = "IAM analysis results and metadata"
   value = {
-    bucket = module.iam_parser.iam_s3_bucket
-    latest_key = module.iam_parser.latest_output_key
+    bucket            = module.iam_parser.s3_bucket_name
+    bucket_arn        = module.iam_parser.s3_bucket_arn
+    latest_output_key = module.iam_parser.latest_output_key
+    s3_prefix         = module.iam_parser.s3_prefix
   }
 }

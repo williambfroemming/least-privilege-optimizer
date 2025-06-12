@@ -3,7 +3,8 @@ data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
 
 resource "aws_iam_role" "iam_analyzer_lambda_role" {
-  name = "${local.name_prefix}-lambda-role"
+  count = var.create_lambda ? 1 : 0
+  name  = "${local.name_prefix}-lambda-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
@@ -17,9 +18,12 @@ resource "aws_iam_role" "iam_analyzer_lambda_role" {
       }
     ]
   })
+
+  tags = local.common_tags
 }
 
 resource "aws_iam_policy" "lambda_logging_policy" {
+  count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-logging-policy"
   description = "Allows Lambda to write to CloudWatch Logs"
 
@@ -41,10 +45,13 @@ resource "aws_iam_policy" "lambda_logging_policy" {
       }
     ]
   })
+
+  tags = local.common_tags
 }
 
 # IMPROVED: More restrictive S3 policy with least privilege
 resource "aws_iam_policy" "lambda_s3_access" {
+  count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-s3-access-policy"
   description = "Allow Lambda to read/write objects in specific S3 prefix only"
 
@@ -71,10 +78,13 @@ resource "aws_iam_policy" "lambda_s3_access" {
       }
     ]
   })
+
+  tags = local.common_tags
 }
 
-# IMPROVED: More restrictive Access Analyzer permissions
+# IMPROVED: More restrictive Access Analyzer permissions - ADD COUNT HERE
 resource "aws_iam_policy" "access_analyzer_permissions" {
+  count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-access-analyzer-policy"
   description = "Permissions for Access Analyzer integration with least privilege"
 
@@ -93,20 +103,25 @@ resource "aws_iam_policy" "access_analyzer_permissions" {
       }
     ]
   })
+
+  tags = local.common_tags
 }
 
-
+# Policy attachments with correct resource references
 resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
-  role       = aws_iam_role.iam_analyzer_lambda_role.name
-  policy_arn = aws_iam_policy.lambda_logging_policy.arn
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.lambda_logging_policy[0].arn
 }
 
 resource "aws_iam_role_policy_attachment" "access_analyzer_attach" {
-  role       = aws_iam_role.iam_analyzer_lambda_role.name
-  policy_arn = aws_iam_policy.access_analyzer_permissions.arn
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.access_analyzer_permissions[0].arn
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_s3_access_attach" {
-  role       = aws_iam_role.iam_analyzer_lambda_role.name
-  policy_arn = aws_iam_policy.lambda_s3_access.arn
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.lambda_s3_access[0].arn
 }

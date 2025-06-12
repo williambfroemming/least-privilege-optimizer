@@ -121,3 +121,33 @@ variable "tags" {
     error_message = "Tag keys and values must contain only valid AWS tag characters."
   }
 }
+
+# Testing and development variables
+variable "enable_monitoring" {
+  description = "Enable CloudWatch monitoring and alarms"
+  type        = bool
+  default     = true
+}
+
+variable "force_destroy_bucket" {
+  description = "Allow bucket to be destroyed even with objects (useful for testing)"
+  type        = bool
+  default     = false
+}
+
+variable "python_runtime" {
+  description = "Python runtime version for Lambda"
+  type        = string
+  default     = "python3.9"
+  
+  validation {
+    condition     = contains(["python3.8", "python3.9", "python3.10", "python3.11"], var.python_runtime)
+    error_message = "Python runtime must be a supported Lambda version."
+  }
+}
+
+variable "create_lambda" {
+  description = "Whether to create the Lambda function (useful for testing S3 only)"
+  type        = bool
+  default     = true
+}
