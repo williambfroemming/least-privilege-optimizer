@@ -16,15 +16,12 @@ infra/terraform/iam/.terraform.lock.hcl
 #--------------------------------------------------
 # Lambda build artifacts & deployment packages
 #--------------------------------------------------
-lambda/build/
-lambda/layer/
-lambda/src/
-lambda/*.zip
-lambda/layer.zip
-lambda/iam_analyzer_engine.zip
-terraform/modules/iam-parser/lambda/build/
-terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
-terraform/modules/iam-parser/lambda/layer.zip
+infra/terraform/modules/iam-parser/lambda/build/
+infra/terraform/modules/iam-parser/lambda/layer/
+infra/terraform/modules/iam-parser/lambda/src/
+infra/terraform/modules/iam-parser/lambda/*.zip
+infra/terraform/modules/iam-parser/lambda/layer.zip
+infra/terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
 
 #--------------------------------------------------
 # Python environment, cache & build artifacts
