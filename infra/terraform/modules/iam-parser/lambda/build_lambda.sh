@@ -27,8 +27,8 @@ mkdir -p layer/python
 echo -e "${GREEN}Installing dependencies to layer...${NC}"
 
 # Install dependencies to layer (for heavy dependencies)
-if [ -f "requirements.txt" ]; then
-    pip install -r requirements.txt \
+if [ -f "src/requirements.txt" ]; then
+    pip install -r src/requirements.txt \
         --target ./layer/python \
         --platform manylinux2014_x86_64 \
         --implementation cp \
@@ -37,19 +37,20 @@ if [ -f "requirements.txt" ]; then
         --upgrade \
         --no-deps || {
         echo -e "${YELLOW}Binary-only install failed, trying with source packages...${NC}"
-        pip install -r requirements.txt \
+        pip install -r src/requirements.txt \
             --target ./layer/python \
             --upgrade
     }
 else
-    echo -e "${RED}requirements.txt not found!${NC}"
+    echo -e "${RED}src/requirements.txt not found!${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}Copying Lambda function code to build directory...${NC}"
 
-# Copy Lambda function code (lightweight)
-cp *.py build/ 2>/dev/null || echo "No Python files to copy"
+# Copy Lambda function code from src directory
+cp src/*.py build/ 2>/dev/null || echo "No Python files to copy from src/"
+cp -r src/modules build/ 2>/dev/null || echo "No modules directory to copy"
 
 # Remove test files and unnecessary items from build
 echo -e "${YELLOW}Cleaning up build directory...${NC}"

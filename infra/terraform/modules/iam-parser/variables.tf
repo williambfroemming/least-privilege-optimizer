@@ -151,3 +151,9 @@ variable "create_lambda" {
   type        = bool
   default     = true
 }
+
+variable "force_lambda_rebuild" {
+  description = "Force Lambda function rebuild (useful for development)"
+  type        = bool
+  default     = false
+}

@@ -35,10 +35,10 @@ resource "aws_iam_role" "test_role" {
     Version = "2012-10-17",
     Statement = [
       {
-        Action = "sts:AssumeRole",
-        Effect = "Allow",
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
         Principal = {
-          Service = "lambda.amazonaws.com"
+          Service = "ec2.amazonaws.com"
         }
       }
     ]
@@ -50,7 +50,6 @@ resource "aws_s3_bucket" "web_app" {
     bucket = "react-web-app-bucket-${random_id.suffix.hex}"
 }
 
-
 resource "random_id" "suffix" {
     byte_length = 4
 }
@@ -58,6 +57,7 @@ resource "random_id" "suffix" {
 # Bucket ownership controls
 resource "aws_s3_bucket_ownership_controls" "web_app" {
     bucket = aws_s3_bucket.web_app.id
+    
     rule {
         object_ownership = "BucketOwnerPreferred"
     }
@@ -206,13 +206,13 @@ output "cloudfront_domain_name" {
     value = aws_cloudfront_distribution.web_app.domain_name
 }
 
-# This output should be in the file that calls the module, not in the module itself
 output "iam_scan_output" {
   description = "IAM analysis results and metadata"
   value = {
-    bucket            = module.iam_parser.s3_bucket_name
+    bucket            = module.iam_parser.s3_bucket_name     # CHANGED FROM iam_s3_bucket
     bucket_arn        = module.iam_parser.s3_bucket_arn
     latest_output_key = module.iam_parser.latest_output_key
     s3_prefix         = module.iam_parser.s3_prefix
+    aws_region        = module.iam_parser.aws_region
   }
 }

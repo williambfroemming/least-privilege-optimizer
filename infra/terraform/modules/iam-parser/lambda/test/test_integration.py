@@ -5,10 +5,10 @@ import warnings
 from dotenv import load_dotenv
 import sys
 sys.path.append('..')
-from modules.iam_analyzer import Analyzer
-from modules.github_pr import GitHubPRHandler
-from modules.policy_recommender import PolicyRecommender
-from index import lambda_handler
+from src.modules.iam_analyzer import Analyzer
+from src.modules.github_pr import GitHubPRHandler
+from src.modules.policy_recommender import PolicyRecommender
+from src.index import lambda_handler
 
 # Filter out the specific botocore datetime warning
 warnings.filterwarnings(

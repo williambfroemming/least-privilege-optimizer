@@ -8,10 +8,10 @@ resource "null_resource" "lambda_build" {
   }
   
   triggers = {
-    code_hash         = fileexists("${path.module}/lambda/index.py") ? filebase64sha256("${path.module}/lambda/index.py") : ""
-    upload_hash       = fileexists("${path.module}/lambda/upload.py") ? filebase64sha256("${path.module}/lambda/upload.py") : ""
-    requirements_hash = fileexists("${path.module}/lambda/requirements.txt") ? filebase64sha256("${path.module}/lambda/requirements.txt") : ""
+    # Use more stable triggers instead of timestamp
     build_script_hash = fileexists("${path.module}/lambda/build_lambda.sh") ? filebase64sha256("${path.module}/lambda/build_lambda.sh") : ""
+    # Only rebuild when you explicitly want to
+    force_rebuild = var.force_lambda_rebuild ? timestamp() : "stable"
   }
 }
 
@@ -27,7 +27,9 @@ resource "aws_lambda_layer_version" "dependencies" {
   
   depends_on = [null_resource.lambda_build]
   
-  source_code_hash = fileexists("${path.module}/lambda/layer.zip") ? filebase64sha256("${path.module}/lambda/layer.zip") : null
+  lifecycle {
+    create_before_destroy = true
+  }
 }
 
 # CloudWatch Log Group - Created before Lambda to control retention
@@ -42,7 +44,7 @@ resource "aws_cloudwatch_log_group" "lambda_logs" {
   })
 }
 
-# Lambda function
+# Lambda function with lifecycle management
 resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   count = var.create_lambda ? 1 : 0
   
@@ -75,6 +77,13 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
     aws_lambda_layer_version.dependencies,
     aws_cloudwatch_log_group.lambda_logs
   ]
+  
+  lifecycle {
+    ignore_changes = [
+      # Ignore changes to last_modified during development
+      last_modified,
+    ]
+  }
 }
 
 # Simple error monitoring (only if monitoring is enabled)

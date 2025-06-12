@@ -38,7 +38,7 @@ locals {
 # IAM parser execution
 resource "null_resource" "run_iam_parser" {
   provisioner "local-exec" {
-    command = "python3 ${path.module}/parse_iam_tf.py ${var.tf_path}"
+    command = "python3 ${path.module}/scripts/parse_iam_tf.py ${var.tf_path}"
 
     environment = {
       S3_BUCKET_NAME = aws_s3_bucket.iam_parser_output.bucket

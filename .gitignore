@@ -1,35 +1,8 @@
-# Terraform directories and state files
-*.tfstate
-*.tfstate.backup
-.terraform/
-.terraform.lock.hcl
-
-# Ignore IAM module-level state and lock files if accidentally created
-infra/terraform/iam/.terraform/
-infra/terraform/iam/terraform.tfstate*
-infra/terraform/iam/.terraform.lock.hcl
-
-# Role simulations
-scripts/test.csv
-
-# Miscellaneous
-.DS_Store
-.vscode/
-.venv/
-.env
-__pycache__
-
-# Module ignores
-lambda/build/
-lambda/iam_analyzer_engine.zip
-lambda/__pycache__/
-terraform/modules/iam-parser/lambda/build/
-terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
 #--------------------------------------------------
 # Terraform state & lock files
 #--------------------------------------------------
 *.tfstate
-*.tfstate.backup
+*.tfstate.*
 *.tfplan
 *.tfvars
 .terraform/
@@ -41,38 +14,93 @@ infra/terraform/iam/terraform.tfstate*
 infra/terraform/iam/.terraform.lock.hcl
 
 #--------------------------------------------------
-# Lambda build artifacts (zips & build directories)
+# Lambda build artifacts & deployment packages
 #--------------------------------------------------
+lambda/build/
+lambda/layer/
+lambda/src/
+lambda/*.zip
+lambda/layer.zip
+lambda/iam_analyzer_engine.zip
 terraform/modules/iam-parser/lambda/build/
 terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
-lambda/build/
-lambda/iam_analyzer_engine.zip
-lambda/__pycache__/
+terraform/modules/iam-parser/lambda/layer.zip
 
 #--------------------------------------------------
-# Python environment & cache
+# Python environment, cache & build artifacts
 #--------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
 .venv/
 env/
 venv/
-__pycache__/
-*.pyc
-pip-wheel-metadata/
+.env/
+ENV/
+env.bak/
+venv.bak/
 
 #--------------------------------------------------
 # Local configuration & secrets
 #--------------------------------------------------
 .env
 .env.*
-.DS_Store
+config.json
+secrets.json
 
 #--------------------------------------------------
 # Editor & IDE metadata
 #--------------------------------------------------
 .vscode/
 .idea/
+*.swp
+*.swo
+*~
 
 #--------------------------------------------------
-# Test files / temporary outputs
+# OS-specific files
+#--------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+#--------------------------------------------------
+# Logs & temporary files
+#--------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+
+#--------------------------------------------------
+# Test files & temporary outputs
 #--------------------------------------------------
 scripts/test.csv
+
+#--------------------------------------------------
+# Shell scripts (if they contain sensitive info)
+#--------------------------------------------------
+lambda/build_lambda.sh
