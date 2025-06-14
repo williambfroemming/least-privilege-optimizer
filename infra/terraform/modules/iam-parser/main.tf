@@ -1,110 +1,64 @@
-resource "aws_s3_bucket" "iam_parser_output" {
-  bucket = var.s3_bucket_name
-
-  tags = {
-    Purpose = "IAM least privilege scan outputs"
+terraform {
+  required_version = ">= 1.0"
+  
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.1"
+    }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.1"
+    }
   }
 }
 
-resource "aws_s3_bucket_public_access_block" "block" {
-  bucket = aws_s3_bucket.iam_parser_output.id
-
-  block_public_acls       = true
-  block_public_policy     = true
-  ignore_public_acls      = true
-  restrict_public_buckets = true
+# Random suffix for uniqueness
+resource "random_id" "suffix" {
+  byte_length = 4
 }
 
-resource "aws_s3_bucket_versioning" "versioning" {
-  bucket = aws_s3_bucket.iam_parser_output.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
+# Local values for consistent naming
+locals {
+  name_prefix = var.name_prefix != "" ? var.name_prefix : "iam-analyzer-${var.environment}-${random_id.suffix.hex}"
+  bucket_name = var.s3_bucket_name != null ? var.s3_bucket_name : "${local.name_prefix}-output"
+  
+  common_tags = merge(var.tags, {
+    Module      = "iam-parser"
+    Environment = var.environment
+    CreatedBy   = "terraform"
+    Timestamp   = timestamp()
+  })
 }
 
+# IAM parser execution
 resource "null_resource" "run_iam_parser" {
   provisioner "local-exec" {
-    command = "python3 ${path.module}/parse_iam_tf.py ${var.tf_path}"
+    command = "python3 ${path.module}/scripts/parse_iam_tf.py ${var.tf_path}"
 
     environment = {
-      S3_BUCKET_NAME = var.s3_bucket_name
+      S3_BUCKET_NAME = aws_s3_bucket.iam_parser_output.bucket
       S3_KEY_PREFIX  = var.s3_prefix
     }
   }
 
   triggers = {
-    always_run = "${timestamp()}"
+    # Use a directory hash or timestamp instead of filemd5 for directories
+    tf_path_dir   = var.tf_path
+    bucket_name   = aws_s3_bucket.iam_parser_output.bucket
+    s3_prefix     = var.s3_prefix
+    # Add a timestamp to force re-execution when needed
+    timestamp     = timestamp()
   }
 
   depends_on = [
     aws_s3_bucket.iam_parser_output,
     aws_s3_bucket_public_access_block.block,
-    aws_s3_bucket_versioning.versioning
-  ]
-}
-
-resource "aws_iam_role" "lambda_exec" {
-  name = "${var.lambda_function_name}-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [{
-      Effect = "Allow",
-      Principal = {
-        Service = "lambda.amazonaws.com"
-      },
-      Action = "sts:AssumeRole"
-    }]
-  })
-}
-
-resource "aws_iam_policy" "lambda_s3_access" {
-  name = "${var.lambda_function_name}-s3-access"
-
-  policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Effect = "Allow",
-        Action = ["s3:GetObject"],
-        Resource = "arn:aws:s3:::${var.s3_bucket_name}/${var.s3_prefix}/*"
-      },
-      {
-        Effect = "Allow",
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents"
-        ],
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "lambda_policy_attach" {
-  role       = aws_iam_role.lambda_exec.name
-  policy_arn = aws_iam_policy.lambda_s3_access.arn
-}
-
-resource "aws_lambda_function" "iam_analyzer_test" {
-  function_name    = var.lambda_function_name
-  filename         = "${path.root}/${var.lambda_zip_path}"
-  role             = aws_iam_role.lambda_exec.arn
-  handler          = "lambda_function.lambda_handler"
-  runtime          = "python3.11"
-  source_code_hash = filebase64sha256("${path.root}/${var.lambda_zip_path}")
-  timeout          = 15
-
-  environment {
-    variables = {
-      S3_BUCKET = var.s3_bucket_name
-      S3_KEY    = "${var.s3_prefix}/latest.json"
-    }
-  }
-
-  depends_on = [
-    aws_iam_role_policy_attachment.lambda_policy_attach
+    aws_s3_bucket_versioning.versioning,
+    aws_s3_bucket_server_side_encryption_configuration.encryption
   ]
 }

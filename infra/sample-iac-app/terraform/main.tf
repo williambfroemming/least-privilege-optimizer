@@ -4,10 +4,23 @@ provider "aws" {
 
 # Import our module
 module "iam_parser" {
-  source               = "../../terraform/modules/iam-parser"
-  tf_path              = "../../sample-iac-app/terraform"
-  lambda_zip_path      = "../../../lambdas/test/iam-analyzer-engine-test.zip"
-  lambda_function_name = "iam-analyzer-engine-test-deployment"
+  source  = "../../terraform/modules/iam-parser"
+  tf_path = "../../sample-iac-app/terraform"
+  
+  # Required variable
+  environment = "dev"
+  
+  # Optional: customize naming
+  s3_prefix             = "iam-analysis"
+  lambda_function_name  = "iam-analyzer"
+  
+  # Optional: add additional tags
+  tags = {
+    Project     = "IAM-Analyzer"
+    ManagedBy   = "Terraform"
+    Environment = "dev"
+    Owner       = "ScopeDown Team"
+  }
 }
 
 # Test IAM Resource
@@ -22,10 +35,10 @@ resource "aws_iam_role" "test_role" {
     Version = "2012-10-17",
     Statement = [
       {
-        Action = "sts:AssumeRole",
-        Effect = "Allow",
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
         Principal = {
-          Service = "lambda.amazonaws.com"
+          Service = "ec2.amazonaws.com"
         }
       }
     ]
@@ -37,7 +50,6 @@ resource "aws_s3_bucket" "web_app" {
     bucket = "react-web-app-bucket-${random_id.suffix.hex}"
 }
 
-
 resource "random_id" "suffix" {
     byte_length = 4
 }
@@ -45,6 +57,7 @@ resource "random_id" "suffix" {
 # Bucket ownership controls
 resource "aws_s3_bucket_ownership_controls" "web_app" {
     bucket = aws_s3_bucket.web_app.id
+    
     rule {
         object_ownership = "BucketOwnerPreferred"
     }
@@ -194,8 +207,12 @@ output "cloudfront_domain_name" {
 }
 
 output "iam_scan_output" {
+  description = "IAM analysis results and metadata"
   value = {
-    bucket = module.iam_parser.iam_s3_bucket
-    latest_key = module.iam_parser.latest_output_key
+    bucket            = module.iam_parser.s3_bucket_name     # CHANGED FROM iam_s3_bucket
+    bucket_arn        = module.iam_parser.s3_bucket_arn
+    latest_output_key = module.iam_parser.latest_output_key
+    s3_prefix         = module.iam_parser.s3_prefix
+    aws_region        = module.iam_parser.aws_region
   }
 }

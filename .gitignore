@@ -1,20 +1,103 @@
-# Terraform directories and state files
+#--------------------------------------------------
+# Terraform state & lock files
+#--------------------------------------------------
 *.tfstate
-*.tfstate.backup
+*.tfstate.*
+*.tfplan
+*.tfvars
 .terraform/
 .terraform.lock.hcl
 
-# Ignore IAM module-level state and lock files if accidentally created
+# Module-level overrides (if local state sneaks in)
 infra/terraform/iam/.terraform/
 infra/terraform/iam/terraform.tfstate*
 infra/terraform/iam/.terraform.lock.hcl
 
-# Role simulations
+#--------------------------------------------------
+# Lambda build artifacts & deployment packages
+#--------------------------------------------------
+infra/terraform/modules/iam-parser/lambda/build/
+infra/terraform/modules/iam-parser/lambda/layer/
+infra/terraform/modules/iam-parser/lambda/src/
+infra/terraform/modules/iam-parser/lambda/*.zip
+infra/terraform/modules/iam-parser/lambda/layer.zip
+infra/terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip
+
+#--------------------------------------------------
+# Python environment, cache & build artifacts
+#--------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+.venv/
+env/
+venv/
+.env/
+ENV/
+env.bak/
+venv.bak/
+
+#--------------------------------------------------
+# Local configuration & secrets
+#--------------------------------------------------
+.env
+.env.*
+config.json
+secrets.json
+
+#--------------------------------------------------
+# Editor & IDE metadata
+#--------------------------------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+#--------------------------------------------------
+# OS-specific files
+#--------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+#--------------------------------------------------
+# Logs & temporary files
+#--------------------------------------------------
+*.log
+logs/
+tmp/
+temp/
+
+#--------------------------------------------------
+# Test files & temporary outputs
+#--------------------------------------------------
 scripts/test.csv
 
-# Miscellaneous
-.DS_Store
-.vscode/
-.venv/
-.env
-__pycache__
+#--------------------------------------------------
+# Shell scripts (if they contain sensitive info)
+#--------------------------------------------------
+lambda/build_lambda.sh
