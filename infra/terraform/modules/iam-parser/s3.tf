@@ -1,11 +1,15 @@
 # S3 bucket for IAM analyzer outputs
 resource "aws_s3_bucket" "iam_parser_output" {
-  bucket = "${local.name_prefix}-bucket"
+  bucket = "${local.name_prefix}-bucket-${random_id.bucket_suffix.hex}"
 
   tags = merge(var.tags, {
     Purpose     = "IAM least privilege scan outputs"
     Environment = var.environment
   })
+}
+
+resource "random_id" "bucket_suffix" {
+  byte_length = 4
 }
 
 resource "aws_s3_bucket_public_access_block" "block" {

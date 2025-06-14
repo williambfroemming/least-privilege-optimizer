@@ -80,8 +80,8 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   
   lifecycle {
     ignore_changes = [
-      # Ignore changes to last_modified during development
-      last_modified,
+      # Remove last_modified from here since it's provider-managed
+      # Keep other attributes you want to ignore
     ]
   }
 }

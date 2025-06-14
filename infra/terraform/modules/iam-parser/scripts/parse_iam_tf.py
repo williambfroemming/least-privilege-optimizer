@@ -39,7 +39,10 @@ def collect_iam_resources(tf_folder, account_id):
         "aws_iam_policy": "policy",
         "aws_iam_role_policy_attachment": "role-policy-attachment",
         "aws_iam_user_policy_attachment": "user-policy-attachment",
-        "aws_iam_group_policy_attachment": "group-policy-attachment"
+        "aws_iam_group_policy_attachment": "group-policy-attachment",
+        "aws_iam_role_policy": "inline-role-policy",
+        "aws_iam_user_policy": "inline-user-policy",
+        "aws_iam_group_policy": "inline-group-policy"
     }
 
     result = {rtype: [] for rtype in iam_resource_types}
