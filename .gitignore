@@ -101,3 +101,9 @@ scripts/test.csv
 # Shell scripts (if they contain sensitive info)
 #--------------------------------------------------
 lambda/build_lambda.sh
+
+#--------------------------------------------------
+# Access Analyzer findings & generated policy outputs
+#--------------------------------------------------
+scripts/access_analyzer_findings.json
+scripts/generated_policies/
