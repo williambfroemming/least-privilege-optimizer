@@ -33,7 +33,7 @@ resource "aws_iam_policy" "lambda_logging_policy" {
       {
         Effect = "Allow",
         Action = "logs:CreateLogGroup",
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-${var.lambda_function_name}"
       },
       {
         Effect = "Allow",
@@ -107,6 +107,33 @@ resource "aws_iam_policy" "access_analyzer_permissions" {
   tags = local.common_tags
 }
 
+resource "aws_iam_policy" "lambda_kms_access" {
+  count       = var.create_lambda ? 1 : 0
+  name        = "${local.name_prefix}-kms-access-policy"
+  description = "Allow Lambda to use KMS key for S3 encryption/decryption"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey"
+        ],
+        Resource = "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/*",
+        Condition = {
+          StringEquals = {
+            "kms:via" = "s3.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
 # Policy attachments with correct resource references
 resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
   count      = var.create_lambda ? 1 : 0
@@ -124,4 +151,10 @@ resource "aws_iam_role_policy_attachment" "lambda_s3_access_attach" {
   count      = var.create_lambda ? 1 : 0
   role       = aws_iam_role.iam_analyzer_lambda_role[0].name
   policy_arn = aws_iam_policy.lambda_s3_access[0].arn
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_kms_access_attach" {
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.lambda_kms_access[0].arn
 }
