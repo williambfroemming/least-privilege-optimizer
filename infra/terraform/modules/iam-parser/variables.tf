@@ -36,6 +36,7 @@ variable "s3_prefix" {
   }
 }
 
+
 # Lambda Configuration
 variable "lambda_function_name" {
   description = "Name for the Lambda function (will be prefixed automatically)"
@@ -155,5 +156,18 @@ variable "create_lambda" {
 variable "force_lambda_rebuild" {
   description = "Force Lambda function rebuild (useful for development)"
   type        = bool
-  default     = false
+  default     = true
+}
+
+variable "github_repo" {
+  description = "GitHub repository name (e.g., 'owner/repo-name')"
+  type        = string
+  default     = "williambfroemming/least-privilege-optimizer"
+}
+
+# AWS Access Analyzer Configuration
+variable "analyzer_arn" {
+  description = "ARN of the AWS Access Analyzer to use for policy analysis"
+  type        = string
+  default     = "arn:aws:access-analyzer:us-east-1:904610147891:analyzer/UnusedAccess-ConsoleAnalyzer-66d25654-3096-4bdf-a40a-d52abc29e706"
 }

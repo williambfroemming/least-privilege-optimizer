@@ -1,5 +1,6 @@
 from typing import Optional, Dict
 import json
+import os
 from github import Github, Auth
 from aws_lambda_powertools import Logger
 
@@ -13,6 +14,9 @@ class GitHubPRHandler:
             github_token: GitHub personal access token
             repo_name: Repository name in format 'owner/repo'
         """
+        if not github_token or not repo_name:
+            raise ValueError("github_token and repo_name are required")
+            
         auth = Auth.Token(github_token)
         self.github = Github(auth=auth)
         self.repo = self.github.get_repo(repo_name)
@@ -21,8 +25,8 @@ class GitHubPRHandler:
         self,
         title: str,
         body: str,
-        base_branch: str = "main",
-        head_branch: str = "iam-policy-updates",
+        base_branch: str = 'main',
+        head_branch: str = 'iam-policy-updates',
         policy_changes: Optional[Dict] = None
     ):
         """Create a pull request with IAM policy changes
@@ -30,8 +34,8 @@ class GitHubPRHandler:
         Args:
             title: PR title
             body: PR description
-            base_branch: Target branch (default: main)
-            head_branch: Source branch (default: iam-policy-updates)
+            base_branch: Target branch (defaults to "main")
+            head_branch: Source branch (defaults to "iam-policy-updates")
             policy_changes: Dictionary of policy changes to commit
         """
         try:

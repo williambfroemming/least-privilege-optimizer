@@ -16,9 +16,8 @@ class PolicyRecommender:
             github_token: GitHub personal access token
             repo_name: Repository name in format 'owner/repo'
         """
-        auth = Auth.Token(github_token)
-        self.github = Github(auth=auth)
-        self.repo = self.github.get_repo(repo_name)
+        self.github_token = github_token
+        self.repo_name = repo_name
         
     def process_findings(self, findings: List[Dict], resources: List[Dict]) -> Dict[str, Dict]:
         """Process analyzer findings and generate policy recommendations

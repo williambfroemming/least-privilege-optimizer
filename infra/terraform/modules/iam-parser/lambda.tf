@@ -24,6 +24,7 @@ resource "aws_lambda_layer_version" "dependencies" {
   description             = "Dependencies for IAM Analyzer Lambda"
   compatible_runtimes     = [var.python_runtime]
   compatible_architectures = ["x86_64"]
+  source_code_hash        = null_resource.lambda_build[0].id
   
   depends_on = [null_resource.lambda_build]
   
@@ -50,23 +51,25 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   
   function_name = "${local.name_prefix}-${var.lambda_function_name}"
   role         = aws_iam_role.iam_analyzer_lambda_role[0].arn
-  handler      = "index.handler"
+  handler      = "index.lambda_handler"
   runtime      = var.python_runtime
   timeout      = var.lambda_timeout
   memory_size  = var.lambda_memory_size
 
   filename         = "${path.module}/lambda/iam_analyzer_engine.zip"
-  source_code_hash = fileexists("${path.module}/lambda/iam_analyzer_engine.zip") ? filebase64sha256("${path.module}/lambda/iam_analyzer_engine.zip") : null
+  source_code_hash = null_resource.lambda_build[0].id
   
   # Use the layer for dependencies
   layers = var.create_lambda && length(aws_lambda_layer_version.dependencies) > 0 ? [aws_lambda_layer_version.dependencies[0].arn] : []
 
   environment {
     variables = {
-      S3_BUCKET   = aws_s3_bucket.iam_parser_output.bucket
-      S3_PREFIX   = var.s3_prefix
-      LOG_LEVEL   = var.environment == "prod" ? "WARNING" : "INFO"
-      ENVIRONMENT = var.environment
+      S3_BUCKET    = aws_s3_bucket.iam_parser_output.bucket
+      S3_PREFIX    = var.s3_prefix
+      LOG_LEVEL    = var.environment == "prod" ? "WARNING" : "INFO"
+      ENVIRONMENT  = var.environment
+      ANALYZER_ARN = var.analyzer_arn
+      GITHUB_REPO  = var.github_repo
     }
   }
 
@@ -80,8 +83,11 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   
   lifecycle {
     ignore_changes = [
-      # Remove last_modified from here since it's provider-managed
-      # Keep other attributes you want to ignore
+      last_modified,
+      source_code_hash
+    ]
+    replace_triggered_by = [
+      null_resource.lambda_build[0]
     ]
   }
 }

@@ -34,13 +34,17 @@ if [ -f "src/requirements.txt" ]; then
         --implementation cp \
         --python-version 39 \
         --only-binary=:all: \
-        --upgrade \
-        --no-deps || {
+        --upgrade || {
         echo -e "${YELLOW}Binary-only install failed, trying with source packages...${NC}"
         pip install -r src/requirements.txt \
             --target ./layer/python \
             --upgrade
     }
+    
+    # Also explicitly install typing_extensions which is commonly needed
+    pip install typing_extensions \
+        --target ./layer/python \
+        --upgrade
 else
     echo -e "${RED}src/requirements.txt not found!${NC}"
     exit 1

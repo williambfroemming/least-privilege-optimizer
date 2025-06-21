@@ -1,5 +1,6 @@
 from typing import Dict, List, Optional
 import json
+import os
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.typing import LambdaContext
 import boto3
@@ -10,32 +11,37 @@ logger = Logger(service="Analyzer")
 class Analyzer:
     """Wrapper class for AWS IAM Access Analyzer operations"""
     
-    def __init__(self, region: str = "us-east-1"):
+    def __init__(self, region: str = 'us-east-1'):
         """Initialize Access Analyzer client
         
         Args:
-            region: AWS region name
+            region: AWS region name (defaults to us-east-1)
         """
         self.client = boto3.client('accessanalyzer', region_name=region)
         self.s3 = boto3.client('s3', region_name=region)
     
-    def fetch_resources_to_analyze(self, bucket_name: str) -> List[Dict]:
+    def fetch_resources_to_analyze(self, bucket_name: str, prefix: str) -> List[Dict]:
         """Fetch IAM resources to analyze from S3
         
         Args:
-            bucket_name: Name of the S3 bucket containing the resources file
+            bucket_name: Name of the S3 bucket containing IAM resources
+            prefix: S3 prefix where the resources are stored
             
         Returns:
             List of IAM resources to analyze with their ARNs
         """
+        if not bucket_name or not prefix:
+            raise ValueError("bucket_name and prefix are required")
+            
         try:
+            s3_key = f"{prefix.rstrip('/')}/latest.json"
             response = self.s3.get_object(
                 Bucket=bucket_name,
-                Key='iam-parsed/latest.json'
+                Key=s3_key
             )
-            raw_resources = json.loads(response['Body'].read().decode('utf-8'))
+            raw_resources = json.loads(response['Body'].read().decode('utf-8'))["resources"]
             
-            # Extract resources and their ARNs from the new format
+            # Extract resources and their ARNs from the format
             resources = []
             
             # Process users
@@ -56,7 +62,7 @@ class Analyzer:
                 
             # Process groups if they exist
             for group in raw_resources.get('aws_iam_group', []):
-                if 'arn' in group:  # Only add if ARN exists
+                if 'arn' in group:
                     resources.append({
                         'ResourceARN': group['arn'],
                         'ResourceType': 'AWS::IAM::Group',
@@ -65,7 +71,7 @@ class Analyzer:
                     
             # Process standalone policies if they exist
             for policy in raw_resources.get('aws_iam_policy', []):
-                if 'arn' in policy:  # Only add if ARN exists
+                if 'arn' in policy:
                     resources.append({
                         'ResourceARN': policy['arn'],
                         'ResourceType': 'AWS::IAM::Policy',
@@ -79,24 +85,25 @@ class Analyzer:
             logger.error(f"Error fetching resources from S3: {str(e)}")
             raise
 
-        
-    def list_findings(self, analyzer_arn: str, bucket_name: Optional[str] = None) -> List[dict]:
-        """List findings from IAM Access Analyzer for specific resources
+    def list_findings(self, analyzer_arn: str, bucket_name: str, prefix: str) -> List[Dict]:
+        """List findings from IAM Access Analyzer
         
         Args:
-            analyzer_arn: ARN of the analyzer to list findings from
-            bucket_name: Optional name of S3 bucket containing resources to analyze
+            analyzer_arn: ARN of the IAM Access Analyzer
+            bucket_name: Name of the S3 bucket for storing findings
+            prefix: S3 prefix where the findings should be stored
             
         Returns:
-            List of findings filtered by resources
+            List of findings from the analyzer
         """
+        if not analyzer_arn or not bucket_name or not prefix:
+            raise ValueError("analyzer_arn, bucket_name, and prefix are required")
+            
         try:
-            # If bucket name is provided, fetch resources to analyze
-            resource_arns = []
-            if bucket_name:
-                resources = self.fetch_resources_to_analyze(bucket_name)
-                resource_arns = [resource['ResourceARN'] for resource in resources]
-                logger.info(f"Analyzing {len(resource_arns)} resources from S3")
+            # Fetch resources to analyze with updated parameters
+            resources = self.fetch_resources_to_analyze(bucket_name, prefix)
+            resource_arns = [resource['ResourceARN'] for resource in resources]
+            logger.info(f"Analyzing {len(resource_arns)} resources from S3")
             
             # Get all findings
             response = self.client.list_findings_v2(
@@ -109,15 +116,12 @@ class Analyzer:
             )
             findings = response.get('findings', [])
             
-            # If we have specific resources to analyze, filter findings
-            if resource_arns:
-                findings = [
-                    finding for finding in findings 
-                    if finding.get('resource', {}).get('arn') in resource_arns
-                ]
-                logger.info(f"Found {len(findings)} findings for specified resources")
-            else:
-                logger.info(f"Found {len(findings)} total findings")
+            # Filter findings by the resources we are analyzing
+            findings = [
+                finding for finding in findings 
+                if finding.get('resource', {}).get('arn') in resource_arns
+            ]
+            logger.info(f"Found {len(findings)} findings for specified resources")
                 
             return findings
             

@@ -22,10 +22,11 @@ resource "aws_iam_role" "iam_analyzer_lambda_role" {
   tags = local.common_tags
 }
 
-resource "aws_iam_policy" "lambda_logging_policy" {
+# IMPROVED: More restrictive logging policy with least privilege
+resource "aws_iam_policy" "lambda_logging" {
   count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-logging-policy"
-  description = "Allows Lambda to write to CloudWatch Logs"
+  description = "Allow Lambda to write to CloudWatch logs with least privilege"
 
   policy = jsonencode({
     Version = "2012-10-17",
@@ -82,7 +83,7 @@ resource "aws_iam_policy" "lambda_s3_access" {
   tags = local.common_tags
 }
 
-# IMPROVED: More restrictive Access Analyzer permissions - ADD COUNT HERE
+# IMPROVED: More restrictive Access Analyzer permissions
 resource "aws_iam_policy" "access_analyzer_permissions" {
   count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-access-analyzer-policy"
@@ -97,7 +98,10 @@ resource "aws_iam_policy" "access_analyzer_permissions" {
           "access-analyzer:ListAnalyzers",
           "access-analyzer:ValidatePolicy",
           "access-analyzer:CheckAccessNotGranted",
-          "access-analyzer:CheckNoNewAccess"
+          "access-analyzer:CheckNoNewAccess",
+          "access-analyzer:ListFindings",
+          "access-analyzer:ListFindingsV2",
+          "access-analyzer:GetFinding"
         ],
         Resource = "*"
       }
@@ -134,11 +138,33 @@ resource "aws_iam_policy" "lambda_kms_access" {
   tags = local.common_tags
 }
 
+# SSM permissions for GitHub token access
+resource "aws_iam_policy" "lambda_ssm_access" {
+  count       = var.create_lambda ? 1 : 0
+  name        = "${local.name_prefix}-ssm-access-policy"
+  description = "Allow Lambda to read GitHub token from SSM Parameter Store"
+
+  policy = jsonencode({
+    Version = "2012-10-17",
+    Statement = [
+      {
+        Effect = "Allow",
+        Action = [
+          "ssm:GetParameter"
+        ],
+        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/github-token"
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
 # Policy attachments with correct resource references
 resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
   count      = var.create_lambda ? 1 : 0
   role       = aws_iam_role.iam_analyzer_lambda_role[0].name
-  policy_arn = aws_iam_policy.lambda_logging_policy[0].arn
+  policy_arn = aws_iam_policy.lambda_logging[0].arn
 }
 
 resource "aws_iam_role_policy_attachment" "access_analyzer_attach" {
@@ -157,4 +183,10 @@ resource "aws_iam_role_policy_attachment" "lambda_kms_access_attach" {
   count      = var.create_lambda ? 1 : 0
   role       = aws_iam_role.iam_analyzer_lambda_role[0].name
   policy_arn = aws_iam_policy.lambda_kms_access[0].arn
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_ssm_access_attach" {
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.lambda_ssm_access[0].arn
 }
