@@ -3,7 +3,7 @@ import json
 import boto3
 from aws_lambda_powertools import Logger
 from aws_lambda_powertools.utilities.typing import LambdaContext
-from modules.iam_analyzer import Analyzer
+from modules.iam_analyzer import IAMAnalyzer
 from modules.github_pr import GitHubPRHandler
 from modules.policy_recommender import PolicyRecommender
 
@@ -38,8 +38,8 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
     try:
         validate_environment()
         
-        # Initialize clients with environment variables
-        analyzer = Analyzer(region=os.environ.get('AWS_REGION'))
+        # Initialize clients with environment variables - using new IAMAnalyzer class
+        analyzer = IAMAnalyzer(region=os.environ.get('AWS_REGION', 'us-east-1'))
         github_handler = GitHubPRHandler(
             github_token=get_github_token(),
             repo_name=os.environ.get('GITHUB_REPO')
@@ -49,38 +49,55 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
             repo_name=os.environ.get('GITHUB_REPO')
         )
         
-        # Fetch resources and findings using S3 bucket and prefix from env
-        resources = analyzer.fetch_resources_to_analyze(
+        # Use the new complete workflow method that returns resources, findings, and summary
+        logger.info("Starting IAM resource analysis workflow")
+        resources, findings, summary = analyzer.analyze_resources_from_s3(
+            analyzer_arn=os.environ.get('ANALYZER_ARN'),
             bucket_name=os.environ.get('S3_BUCKET'),
             prefix=os.environ.get('S3_PREFIX')
         )
-        findings = analyzer.list_findings(
-            os.environ.get('ANALYZER_ARN'),
-            bucket_name=os.environ.get('S3_BUCKET'),
-            prefix=os.environ.get('S3_PREFIX')
-        )
+        
+        logger.info(f"Analysis complete: {summary.total_findings} findings for {len(resources)} resources")
         
         if not findings:
             return {
                 "statusCode": 200,
                 "body": json.dumps({
                     "message": "No findings to analyze",
-                    "status": "success"
+                    "status": "success",
+                    "resources_analyzed": len(resources),
+                    "findings_count": 0
                 })
             }
             
+        # Convert IAMResource objects to dictionaries for policy recommender compatibility
+        resources_dict = []
+        for resource in resources:
+            resources_dict.append({
+                "ResourceARN": resource.arn,
+                "ResourceType": resource.resource_type.value,
+                "ResourceName": resource.name,
+                "tf_resource_name": resource.name.replace('-', '_')  # Convert to terraform-safe name
+            })
+        
         # Process findings and generate recommendations
-        recommendations = policy_recommender.process_findings(findings, resources)
+        logger.info("Processing findings and generating policy recommendations")
+        recommendations = policy_recommender.process_findings(findings, resources_dict)
         
         if not recommendations:
             return {
                 "statusCode": 200,
                 "body": json.dumps({
                     "message": "No policy updates required",
-                    "status": "success"
+                    "status": "success",
+                    "resources_analyzed": len(resources),
+                    "findings_count": len(findings),
+                    "recommendations_count": 0
                 })
             }
             
+        logger.info(f"Generated {len(recommendations)} policy recommendations")
+        
         # Update Terraform configurations and create PR with defaults
         update_success = policy_recommender.update_terraform_policies(recommendations)
         if update_success:
@@ -92,9 +109,11 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
 This PR contains automated updates to IAM policies based on Access Analyzer findings.
 
 ## Summary
+- **Resources analyzed**: {len(resources)}
 - **Findings processed**: {len(findings)}
 - **Policy recommendations**: {len(recommendations)}
-- **Analysis date**: {json.dumps(context.aws_request_id if hasattr(context, 'aws_request_id') else 'N/A')}
+- **Finding types**: {', '.join(summary.findings_by_type.keys())}
+- **Analysis date**: {context.aws_request_id if hasattr(context, 'aws_request_id') else 'N/A'}
 
 ## Changes
 The following IAM policies have been updated to follow the principle of least privilege:
@@ -121,8 +140,13 @@ Please review the policy changes carefully before merging. These updates are bas
             "body": json.dumps({
                 "message": "Successfully processed findings and generated recommendations",
                 "status": "success" if update_success else "partial_success",
+                "resources_analyzed": len(resources),
                 "recommendations_count": len(recommendations),
-                "findings_count": len(findings)
+                "findings_count": len(findings),
+                "finding_summary": {
+                    "by_type": summary.findings_by_type,
+                    "by_status": summary.findings_by_status
+                }
             })
         }
         
