@@ -1,9 +1,9 @@
 
 # MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-22 21:12:30
-# Finding ID: b18bd454-3888-4471-8dba-8d02302ad998
-# Resource: bob_dev_test
-# Removed unused services: ecr, ecs, iam, lambda, logs, s3
-# This modification removes 6 unused service permissions
+# Finding ID: 88169d3f-40b1-4148-92c3-dd74d76f78c9
+# Resource: alice_analyst_test
+# Removed unused services: athena, cloudwatch, dynamodb, glue, iam, kms, lambda, s3, sts
+# This modification removes 9 unused service permissions
 # Based on AWS Access Analyzer findings for least privilege access
 #
 resource "aws_iam_user_policy" "alice_analyst_policy" {
@@ -18,8 +18,8 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
         Effect   = "Allow",
         Action   = [
           "*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
+          "*",                     # All Athena actions
+          "*",                       # All Glue actions (overkill for most analy)
           "cloudwatch:Get*",              # OK
           "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
           "dynamodb:Scan",                # Too broad for sensitive data
@@ -80,10 +80,10 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "CloudWatchLogsAccess",
         Effect: "Allow",
         Action: [
-          "DescribeLogGroups",
-          "GetLogEvents",
-          "FilterLogEvents",
-          "PutLogEvents"                # Not always needed
+          "logs:DescribeLogGroups",
+          "logs:GetLogEvents",
+          "logs:FilterLogEvents",
+          "logs:PutLogEvents"                # Not always needed
         ],
         Resource: "*"
       },
@@ -91,10 +91,10 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "ECSAndECRAccess",
         Effect: "Allow",
         Action: [
-          "ListClusters",
-          "DescribeTasks",
-          "GetAuthorizationToken",
-          "DescribeRepositories"
+          "ecs:ListClusters",
+          "ecs:DescribeTasks",
+          "ecr:GetAuthorizationToken",
+          "ecr:DescribeRepositories"
         ],
         Resource: "*"
       }
@@ -118,13 +118,13 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
       {
         Effect = "Allow",
         Action = [
-          "GetLogEvents",
-          "DescribeLogStreams",
-          "DescribeLogGroups",
+          "logs:GetLogEvents",
+          "logs:DescribeLogStreams",
+          "logs:DescribeLogGroups",
           "GetObject",
           "ListBucket",
-          "cloudwatch:GetMetricData",
-          "glue:GetTables"
+          "GetMetricData",
+          "GetTables"
         ],
         Resource = "*"
       }
