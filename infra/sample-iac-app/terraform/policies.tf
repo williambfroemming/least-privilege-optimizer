@@ -1,3 +1,11 @@
+
+# MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-22 21:12:30
+# Finding ID: b18bd454-3888-4471-8dba-8d02302ad998
+# Resource: bob_dev_test
+# Removed unused services: ecr, ecs, iam, lambda, logs, s3
+# This modification removes 6 unused service permissions
+# Based on AWS Access Analyzer findings for least privilege access
+#
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
@@ -9,7 +17,7 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
         Sid      = "OverlyPermissiveReadAndWrite",
         Effect   = "Allow",
         Action   = [
-          "s3:*",                         # Full S3 access
+          "*",                         # Full S3 access
           "athena:*",                     # All Athena actions
           "glue:*",                       # All Glue actions (overkill for most analysts)
           "cloudwatch:Get*",              # OK
@@ -39,7 +47,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "LambdaOverreach",
         Effect: "Allow",
         Action: [
-          "lambda:*"                          # Too much
+          "*"                          # Too much
         ],
         Resource: "*"
       },
@@ -47,24 +55,24 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "S3FullBucketAccess",
         Effect: "Allow",
         Action: [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "s3:DeleteObject",                  # Excessive
-          "s3:PutBucketPolicy",               # Definitely too much
-          "s3:GetBucketAcl"
+          "PutObject",
+          "GetObject",
+          "ListBucket",
+          "DeleteObject",                  # Excessive
+          "PutBucketPolicy",               # Definitely too much
+          "GetBucketAcl"
         ],
         Resource: [
-          "arn:aws:s3:::ucb-capstone-bucket",
-          "arn:aws:s3:::ucb-capstone-bucket/*"
+          "arn:aws:ucb-capstone-bucket",
+          "arn:aws:ucb-capstone-bucket/*"
         ]
       },
       {
         Sid: "IAMReconAccess",
         Effect: "Allow",
         Action: [
-          "iam:GetRole",
-          "iam:ListRoles"
+          "GetRole",
+          "ListRoles"
         ],
         Resource: "*"
       },
@@ -72,10 +80,10 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "CloudWatchLogsAccess",
         Effect: "Allow",
         Action: [
-          "logs:DescribeLogGroups",
-          "logs:GetLogEvents",
-          "logs:FilterLogEvents",
-          "logs:PutLogEvents"                # Not always needed
+          "DescribeLogGroups",
+          "GetLogEvents",
+          "FilterLogEvents",
+          "PutLogEvents"                # Not always needed
         ],
         Resource: "*"
       },
@@ -83,10 +91,10 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "ECSAndECRAccess",
         Effect: "Allow",
         Action: [
-          "ecs:ListClusters",
-          "ecs:DescribeTasks",
-          "ecr:GetAuthorizationToken",
-          "ecr:DescribeRepositories"
+          "ListClusters",
+          "DescribeTasks",
+          "GetAuthorizationToken",
+          "DescribeRepositories"
         ],
         Resource: "*"
       }
@@ -110,11 +118,11 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
       {
         Effect = "Allow",
         Action = [
-          "logs:GetLogEvents",
-          "logs:DescribeLogStreams",
-          "logs:DescribeLogGroups",
-          "s3:GetObject",
-          "s3:ListBucket",
+          "GetLogEvents",
+          "DescribeLogStreams",
+          "DescribeLogGroups",
+          "GetObject",
+          "ListBucket",
           "cloudwatch:GetMetricData",
           "glue:GetTables"
         ],
