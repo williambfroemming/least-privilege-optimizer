@@ -1,8 +1,8 @@
 # MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-22 17:49:32
-# Finding ID: b18bd454-3888-4471-8dba-8d02302ad998
-# Resource: bob_dev_test
-# Removed unused services: ecr, ecs, iam, lambda, logs, s3
-# This modification removes 6 unused service permissions
+# Finding ID: 88169d3f-40b1-4148-92c3-dd74d76f78c9
+# Resource: alice_analyst_test
+# Removed unused services: athena, cloudwatch, dynamodb, glue, iam, kms, lambda, s3, sts
+# This modification removes 9 unused service permissions
 # Based on AWS Access Analyzer findings for least privilege access
 # All policies validated using AWS Access Analyzer validate-policy API
 
@@ -118,8 +118,9 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
         {
             Effect = "Allow",
             Action = [
-                "cloudwatch:GetMetricData",
-                "glue:GetTables"
+                "logs:GetLogEvents",
+                "logs:DescribeLogStreams",
+                "logs:DescribeLogGroups"
             ],
             Resource = "*"
         }
