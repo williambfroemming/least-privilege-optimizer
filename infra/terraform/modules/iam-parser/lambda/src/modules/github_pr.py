@@ -26,7 +26,7 @@ class GitHubPRHandler:
         self,
         title: str,
         body: str,
-        base_branch: str = 'main',
+        base_branch: str = 'demo',  # Changed from 'main' to 'demo'
         head_branch: str = 'iam-policy-updates',
         policy_changes: Optional[Dict] = None
     ):
@@ -35,7 +35,7 @@ class GitHubPRHandler:
         Args:
             title: PR title
             body: PR description
-            base_branch: Target branch (defaults to "main")
+            base_branch: Target branch (defaults to "demo")
             head_branch: Source branch (defaults to "iam-policy-updates")
             policy_changes: Dictionary of policy changes to commit
         """

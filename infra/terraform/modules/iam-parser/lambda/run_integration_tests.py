@@ -88,7 +88,7 @@ def run_tests(live_pr=False, specific_test=None):
     
     # Build pytest command
     cmd = [
-        "python3", "-m", "pytest",  # Changed from sys.executable to python3
+        sys.executable, "-m", "pytest",
         str(test_file),
         "-v", "-s",  # verbose output and show prints
         "--tb=short",  # shorter tracebacks

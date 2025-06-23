@@ -407,28 +407,10 @@ class TestRealAWSIntegration:
         try:
             # Initialize components
             analyzer = IAMAnalyzer(region=test_config['aws_region'])
-            
-            # Mock GitHub and AWS services for PolicyRecommender
-            with patch('modules.policy_recommender.Github') as mock_github_class, \
-                 patch('modules.policy_recommender.boto3') as mock_boto3:
-                
-                # Mock GitHub
-                mock_github = Mock()
-                mock_repo = Mock()
-                mock_github.get_repo.return_value = mock_repo
-                mock_github_class.return_value = mock_github
-                
-                # Mock AWS Access Analyzer for validation
-                mock_access_analyzer = Mock()
-                mock_access_analyzer.validate_policy.return_value = {
-                    'findings': []  # Return valid policy
-                }
-                mock_boto3.client.return_value = mock_access_analyzer
-                
-                policy_recommender = PolicyRecommender(
-                    github_token=test_config['github_token'] or 'mock-token',
-                    repo_name=test_config['github_repo']
-                )
+            policy_recommender = PolicyRecommender(
+                github_token=test_config['github_token'] or 'mock-token',
+                repo_name=test_config['github_repo']
+            )
             
             # Get resources and findings
             resources = analyzer.fetch_resources_from_s3(
@@ -489,15 +471,9 @@ class TestRealAWSIntegration:
             # Show what would be in the PR
             for resource_key, recommendation in recommendations.items():
                 print(f"\n🔍 Resource: {resource_key}")
-                print(f"   Finding ID: {recommendation.get('finding_id')}")
-                print(f"   Resource Type: {recommendation.get('resource_type')}")
-                print(f"   Recommendation Type: {recommendation.get('recommendation_type')}")
+                print(f"   Type: {recommendation.get('recommendation_type')}")
                 print(f"   Confidence: {recommendation.get('confidence')}")
                 print(f"   Action Required: {recommendation.get('action_required')}")
-                
-                if 'unused_services' in recommendation:
-                    unused_services = recommendation['unused_services']
-                    print(f"   Unused Services ({len(unused_services)}): {', '.join(unused_services)}")
                 
                 if 'unused_actions' in recommendation:
                     unused_count = len(recommendation['unused_actions'])
@@ -510,83 +486,58 @@ class TestRealAWSIntegration:
                             print(f"     - {action}")
                         print(f"     ... and {unused_count - 3} more")
                 
-                print(f"   Recommendation Reason: {recommendation.get('recommendation_reason', 'N/A')}")
-            
-            # Test the PR creation process with mock
-            print(f"\n📁 Testing PR creation process...")
-            
-            # Mock the GitHub PR creation methods
-            mock_files_created = {}
-            
-            def mock_create_github_pr(title, body, files):
-                """Mock GitHub PR creation to capture what would be created"""
-                print(f"\n📝 Mock PR Creation:")
-                print(f"   Title: {title}")
-                print(f"   Files to be created/updated: {len(files)}")
-                
-                for file_info in files:
-                    file_path = file_info['path']
-                    content = file_info['content']
-                    mock_files_created[file_path] = content
+                if 'recommended_policy' in recommendation:
+                    policy = recommendation['recommended_policy']
+                    print(f"   Recommended Policy: {len(policy.get('Statement', []))} statements")
                     
-                    print(f"\n--- {file_path} ---")
-                    # Show first 500 characters of content
-                    if isinstance(content, str):
-                        display_content = content[:500]
-                        if len(content) > 500:
-                            display_content += "\n... (truncated)"
-                        print(display_content)
-                    else:
-                        print(json.dumps(content, indent=2)[:500])
+                    # Show first statement as example
+                    if policy.get('Statement'):
+                        stmt = policy['Statement'][0]
+                        actions = stmt.get('Action', [])
+                        if isinstance(actions, list):
+                            action_summary = f"{len(actions)} actions" if len(actions) > 3 else str(actions)
+                        else:
+                            action_summary = str(actions)
+                        print(f"     Example: {stmt.get('Effect')} {action_summary} on {stmt.get('Resource', 'unknown')}")
+            
+            # Generate the actual PR content that would be created
+            print(f"\n📁 Files that would be created in GitHub PR:")
+            
+            # Mock the PR creation to capture file contents
+            mock_files = {}
+            
+            def capture_files(self, title, body, base_branch='main', head_branch='iam-policy-updates', policy_changes=None):
+                if policy_changes:
+                    mock_files.update(policy_changes)
+                return {"status": "success", "pr_number": 999}
+            
+            # Temporarily patch to capture files
+            original_method = policy_recommender.github_handler.create_pull_request
+            policy_recommender.github_handler.create_pull_request = capture_files.__get__(policy_recommender.github_handler)
+            
+            try:
+                # This will populate mock_files with the content
+                policy_recommender.create_policy_updates_pr(recommendations)
                 
-                return True
-            
-            # Patch the _create_github_pr method
-            policy_recommender._create_github_pr = mock_create_github_pr
-            
-            # Mock the _download_terraform_files method to return empty dict
-            policy_recommender._download_terraform_files = lambda: {}
-            
-            # Test PR creation
-            success = policy_recommender.create_policy_updates_pr(recommendations)
-            
-            print(f"\n✅ PR creation test {'succeeded' if success else 'failed'}")
-            print(f"📊 Total files that would be created: {len(mock_files_created)}")
-            
-            # Show summary of what would be in the PR
-            if mock_files_created:
-                print("\n📋 Summary of files that would be created:")
-                for file_path in mock_files_created.keys():
-                    print(f"   - {file_path}")
-            
-            # Test the AWS validation is working
-            print(f"\n🔍 Testing AWS policy validation...")
-            sample_policy = {
-                "Version": "2012-10-17",
-                "Statement": [
-                    {
-                        "Effect": "Allow",
-                        "Action": ["s3:GetObject"],
-                        "Resource": "*"
-                    }
-                ]
-            }
-            
-            validation_result = policy_recommender._validate_policy_with_aws(
-                sample_policy, 
-                "test_policy"
-            )
-            
-            print(f"   Validation Result: {'✅ Valid' if validation_result['is_valid'] else '❌ Invalid'}")
-            if not validation_result['is_valid']:
-                print(f"   Errors: {validation_result['errors']}")
-            if validation_result['warning_count'] > 0:
-                print(f"   Warnings: {validation_result['warnings']}")
+                # Display the captured files
+                for file_path, content in mock_files.items():
+                    print(f"\n--- {file_path} ---")
+                    if isinstance(content, str):
+                        # Show first few lines for readability
+                        lines = content.split('\n')
+                        for line in lines[:20]:  # First 20 lines
+                            print(line)
+                        if len(lines) > 20:
+                            print(f"... and {len(lines) - 20} more lines")
+                    else:
+                        print(json.dumps(content, indent=2))
+                        
+            finally:
+                # Restore original method
+                policy_recommender.github_handler.create_pull_request = original_method
             
         except Exception as e:
             print(f"❌ Policy recommender test failed: {str(e)}")
-            import traceback
-            traceback.print_exc()
             raise
 
     def test_environment_validation(self):
