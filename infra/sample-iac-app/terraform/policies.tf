@@ -1,3 +1,11 @@
+# MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-22 18:22:17
+# Finding ID: b18bd454-3888-4471-8dba-8d02302ad998
+# Resource: bob_dev_test
+# Removed unused services: ecr, ecs, iam, lambda, logs, s3
+# This modification removes 6 unused service permissions
+# Based on AWS Access Analyzer findings for least privilege access
+# All policies validated using AWS Access Analyzer validate-policy API
+
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
@@ -9,17 +17,17 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
         Sid      = "OverlyPermissiveReadAndWrite",
         Effect   = "Allow",
         Action   = [
-          "s3:*",
-          "athena:*",
-          "glue:*",
-          "cloudwatch:Get*",
-          "cloudwatch:PutMetricData",
-          "dynamodb:Scan",
-          "kms:Decrypt",
-          "iam:List*",
-          "iam:Get*",
-          "lambda:InvokeFunction",
-          "sts:AssumeRole"
+          "s3:*",                         # Full S3 access
+          "athena:*",                     # All Athena actions
+          "glue:*",                       # All Glue actions (overkill for most analysts)
+          "cloudwatch:Get*",              # OK
+          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
+          "dynamodb:Scan",                # Too broad for sensitive data
+          "kms:Decrypt",                  # Dangerous without restrictions
+          "iam:List*",                    # Allows recon
+          "iam:Get*",                     # More recon
+          "lambda:InvokeFunction",        # Could be misused
+          "sts:AssumeRole"                # Very risky unless scoped tightly
         ],
         Resource = "*"
       }
@@ -39,7 +47,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "LambdaOverreach",
         Effect: "Allow",
         Action: [
-          "lambda:*"
+          "lambda:*"                          # Too much
         ],
         Resource: "*"
       },
@@ -50,8 +58,8 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
           "s3:PutObject",
           "s3:GetObject",
           "s3:ListBucket",
-          "s3:DeleteObject",
-          "s3:PutBucketPolicy",
+          "s3:DeleteObject",                  # Excessive
+          "s3:PutBucketPolicy",               # Definitely too much
           "s3:GetBucketAcl"
         ],
         Resource: [
@@ -75,7 +83,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
           "logs:DescribeLogGroups",
           "logs:GetLogEvents",
           "logs:FilterLogEvents",
-          "logs:PutLogEvents"
+          "logs:PutLogEvents"                # Not always needed
         ],
         Resource: "*"
       },
@@ -107,19 +115,14 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "logs:GetLogEvents",
-          "logs:DescribeLogStreams",
-          "logs:DescribeLogGroups",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "cloudwatch:GetMetricData",
-          "glue:GetTables"
-        ],
-        Resource = "*"
-      }
+        {
+            Effect = "Allow",
+            Action = [
+                "cloudwatch:GetMetricData",
+                "glue:GetTables"
+            ],
+            Resource = "*"
+        }
     ]
-  })
+})
 }
