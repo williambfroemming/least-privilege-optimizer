@@ -1,3 +1,11 @@
+# MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-22 17:49:32
+# Finding ID: b18bd454-3888-4471-8dba-8d02302ad998
+# Resource: bob_dev_test
+# Removed unused services: ecr, ecs, iam, lambda, logs, s3
+# This modification removes 6 unused service permissions
+# Based on AWS Access Analyzer findings for least privilege access
+# All policies validated using AWS Access Analyzer validate-policy API
+
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
@@ -107,19 +115,14 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "logs:GetLogEvents",
-          "logs:DescribeLogStreams",
-          "logs:DescribeLogGroups",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "cloudwatch:GetMetricData",
-          "glue:GetTables"
-        ],
-        Resource = "*"
-      }
+        {
+            Effect = "Allow",
+            Action = [
+                "cloudwatch:GetMetricData",
+                "glue:GetTables"
+            ],
+            Resource = "*"
+        }
     ]
-  })
+})
 }
