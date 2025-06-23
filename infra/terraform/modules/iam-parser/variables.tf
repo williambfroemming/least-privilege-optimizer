@@ -52,7 +52,7 @@ variable "lambda_function_name" {
 variable "lambda_timeout" {
   description = "Timeout for the IAM analyzer Lambda function (seconds)"
   type        = number
-  default     = 10
+  default     = 60
   
   validation {
     condition     = var.lambda_timeout >= 1 && var.lambda_timeout <= 900
@@ -169,5 +169,5 @@ variable "github_repo" {
 variable "analyzer_arn" {
   description = "ARN of the AWS Access Analyzer to use for policy analysis"
   type        = string
-  default     = "arn:aws:access-analyzer:us-east-1:904610147891:analyzer/UnusedAccess-ConsoleAnalyzer-66d25654-3096-4bdf-a40a-d52abc29e706"
+  default     = "arn:aws:access-analyzer:us-east-1:904610147891:analyzer/UnusedAccess-ConsoleAnalyzer-5449bfec-fbc1-4920-9e88-94b89b0044b8"
 }

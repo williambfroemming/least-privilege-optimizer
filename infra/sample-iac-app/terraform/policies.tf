@@ -9,17 +9,17 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
         Sid      = "OverlyPermissiveReadAndWrite",
         Effect   = "Allow",
         Action   = [
-          "s3:*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
-          "cloudwatch:Get*",              # OK
-          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
-          "dynamodb:Scan",                # Too broad for sensitive data
-          "kms:Decrypt",                  # Dangerous without restrictions
-          "iam:List*",                    # Allows recon
-          "iam:Get*",                     # More recon
-          "lambda:InvokeFunction",        # Could be misused
-          "sts:AssumeRole"                # Very risky unless scoped tightly
+          "s3:*",
+          "athena:*",
+          "glue:*",
+          "cloudwatch:Get*",
+          "cloudwatch:PutMetricData",
+          "dynamodb:Scan",
+          "kms:Decrypt",
+          "iam:List*",
+          "iam:Get*",
+          "lambda:InvokeFunction",
+          "sts:AssumeRole"
         ],
         Resource = "*"
       }
@@ -39,7 +39,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "LambdaOverreach",
         Effect: "Allow",
         Action: [
-          "lambda:*"                          # Too much
+          "lambda:*"
         ],
         Resource: "*"
       },
@@ -50,8 +50,8 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
           "s3:PutObject",
           "s3:GetObject",
           "s3:ListBucket",
-          "s3:DeleteObject",                  # Excessive
-          "s3:PutBucketPolicy",               # Definitely too much
+          "s3:DeleteObject",
+          "s3:PutBucketPolicy",
           "s3:GetBucketAcl"
         ],
         Resource: [
@@ -75,7 +75,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
           "logs:DescribeLogGroups",
           "logs:GetLogEvents",
           "logs:FilterLogEvents",
-          "logs:PutLogEvents"                # Not always needed
+          "logs:PutLogEvents"
         ],
         Resource: "*"
       },

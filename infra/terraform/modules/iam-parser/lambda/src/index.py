@@ -33,26 +33,24 @@ def validate_environment():
 def lambda_handler(event: dict, context: LambdaContext) -> dict:
     """
     Lambda handler that analyzes IAM policies and creates pull requests with updates
-    
     """
     try:
         validate_environment()
         
-        # Initialize clients with environment variables - using new IAMAnalyzer class
+        # Initialize clients with environment variables
         analyzer = IAMAnalyzer(region=os.environ.get('AWS_REGION', 'us-east-1'))
-        github_handler = GitHubPRHandler(
-            github_token=get_github_token(),
-            repo_name=os.environ.get('GITHUB_REPO')
-        )
         policy_recommender = PolicyRecommender(
             github_token=get_github_token(),
-            repo_name=os.environ.get('GITHUB_REPO')
+            repo_name=os.environ.get('GITHUB_REPO'),
+            region=os.environ.get('AWS_REGION', 'us-east-1')  # Add region parameter
         )
         
-        # Use the new complete workflow method that returns resources, findings, and summary
+        # Get analyzer ARN from environment
+        analyzer_arn = os.environ.get('ANALYZER_ARN')
+        
         logger.info("Starting IAM resource analysis workflow")
         resources, findings, summary = analyzer.analyze_resources_from_s3(
-            analyzer_arn=os.environ.get('ANALYZER_ARN'),
+            analyzer_arn=analyzer_arn,
             bucket_name=os.environ.get('S3_BUCKET'),
             prefix=os.environ.get('S3_PREFIX')
         )
@@ -69,7 +67,7 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
                     "findings_count": 0
                 })
             }
-            
+        
         # Convert IAMResource objects to dictionaries for policy recommender compatibility
         resources_dict = []
         for resource in resources:
@@ -77,76 +75,65 @@ def lambda_handler(event: dict, context: LambdaContext) -> dict:
                 "ResourceARN": resource.arn,
                 "ResourceType": resource.resource_type.value,
                 "ResourceName": resource.name,
-                "tf_resource_name": resource.name.replace('-', '_')  # Convert to terraform-safe name
+                "tf_resource_name": resource.name.replace('-', '_')
             })
         
-        # Process findings and generate recommendations
-        logger.info("Processing findings and generating policy recommendations")
-        recommendations = policy_recommender.process_findings(findings, resources_dict)
+        logger.info(f"Fetching detailed findings for {len(findings)} findings")
+        
+        # Fetch detailed findings using the new method
+        detailed_findings = policy_recommender.fetch_detailed_findings(analyzer_arn, findings)
+        
+        if not detailed_findings:
+            return {
+                "statusCode": 200,
+                "body": json.dumps({
+                    "message": "No detailed findings available for analysis",
+                    "status": "success",
+                    "resources_analyzed": len(resources),
+                    "findings_count": len(findings),
+                    "detailed_findings_count": 0
+                })
+            }
+        
+        logger.info(f"Processing {len(detailed_findings)} detailed findings")
+        
+        # Process detailed findings and generate recommendations
+        recommendations = policy_recommender.process_detailed_findings(detailed_findings, resources_dict)
         
         if not recommendations:
             return {
                 "statusCode": 200,
                 "body": json.dumps({
-                    "message": "No policy updates required",
+                    "message": "No policy updates required - no unused permissions found",
                     "status": "success",
                     "resources_analyzed": len(resources),
                     "findings_count": len(findings),
+                    "detailed_findings_count": len(detailed_findings),
                     "recommendations_count": 0
                 })
             }
-            
+        
         logger.info(f"Generated {len(recommendations)} policy recommendations")
         
-        # Update Terraform configurations and create PR with defaults
-        update_success = policy_recommender.update_terraform_policies(recommendations)
-        if update_success:
-            # Set reasonable defaults for PR variables
-            pr_title = os.environ.get('PR_TITLE', 'Automated IAM Policy Updates - Least Privilege Optimization')
-            pr_body = os.environ.get('PR_BODY', f'''
-# IAM Policy Updates - Least Privilege Optimization
-
-This PR contains automated updates to IAM policies based on Access Analyzer findings.
-
-## Summary
-- **Resources analyzed**: {len(resources)}
-- **Findings processed**: {len(findings)}
-- **Policy recommendations**: {len(recommendations)}
-- **Finding types**: {', '.join(summary.findings_by_type.keys())}
-- **Analysis date**: {context.aws_request_id if hasattr(context, 'aws_request_id') else 'N/A'}
-
-## Changes
-The following IAM policies have been updated to follow the principle of least privilege:
-
-{chr(10).join([f"- {resource}" for resource in recommendations.keys()])}
-
-## Review Notes
-Please review the policy changes carefully before merging. These updates are based on actual usage patterns detected by AWS IAM Access Analyzer.
-
-*This PR was generated automatically by the Least Privilege Optimizer.*
-            '''.strip())
-            base_branch = os.environ.get('BASE_BRANCH', 'main')
-            head_branch = os.environ.get('HEAD_BRANCH', 'automated-iam-policy-updates')
-            
-            github_handler.create_pull_request(
-                title=pr_title,
-                body=pr_body,
-                base_branch=base_branch,
-                head_branch=head_branch
-            )
+        # Create PR with policy updates using the new method
+        pr_success = policy_recommender.create_policy_updates_pr(recommendations)
         
         return {
             "statusCode": 200,
             "body": json.dumps({
-                "message": "Successfully processed findings and generated recommendations",
-                "status": "success" if update_success else "partial_success",
+                "message": "Successfully processed findings and created PR" if pr_success else "Generated recommendations but failed to create PR",
+                "status": "success" if pr_success else "partial_success",
                 "resources_analyzed": len(resources),
-                "recommendations_count": len(recommendations),
                 "findings_count": len(findings),
+                "detailed_findings_count": len(detailed_findings),
+                "recommendations_count": len(recommendations),
+                "pr_created": pr_success,
                 "finding_summary": {
                     "by_type": summary.findings_by_type,
                     "by_status": summary.findings_by_status
-                }
+                },
+                "unused_services_found": len(set().union(*[rec['unused_services'] for rec in recommendations.values()])),
+                "total_unused_actions": sum(len(rec['unused_actions']) for rec in recommendations.values())
             })
         }
         

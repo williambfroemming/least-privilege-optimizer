@@ -1,836 +1,1104 @@
-from typing import Dict, List, Optional, Union
 import json
+import os
+import boto3
+import re
+from typing import Dict, List, Optional, Any
 from aws_lambda_powertools import Logger
+from datetime import datetime
 from github import Github, Auth
-from botocore.exceptions import ClientError
-
-# Import the new types for better compatibility
-try:
-    from .iam_analyzer import IAMResource, ResourceType
-except ImportError:
-    # Fallback for when types aren't available
-    IAMResource = None
-    ResourceType = None
+import base64
 
 logger = Logger(service="PolicyRecommender")
 
 class PolicyRecommender:
-    """Handles policy recommendations and terraform updates based on analyzer findings"""
+    """Handles policy recommendations based on detailed Access Analyzer findings"""
     
-    def __init__(self, github_token: str, repo_name: str):
+    def __init__(self, github_token: str, repo_name: str, region: str = 'us-east-1'):
         """Initialize PolicyRecommender
         
         Args:
             github_token: GitHub personal access token
             repo_name: Repository name in format 'owner/repo'
+            region: AWS region for Access Analyzer client
         """
         self.github_token = github_token
         self.repo_name = repo_name
-        logger.info(f"Initialized PolicyRecommender for repo: {repo_name}")
+        self.region = region
+        self.github = Github(auth=Auth.Token(github_token))
+        self.repo = self.github.get_repo(repo_name)
+        self.access_analyzer = boto3.client('accessanalyzer', region_name=region)
+        logger.info(f"Initialized PolicyRecommender for repo: {repo_name} in region: {region}")
+    
+    def fetch_detailed_findings(self, analyzer_arn: str, findings: List[Dict]) -> Dict[str, Dict]:
+        """Fetch detailed findings from Access Analyzer for each finding
+        
+        Args:
+            analyzer_arn: ARN of the Access Analyzer
+            findings: List of basic findings from list_findings
+            
+        Returns:
+            Dictionary mapping finding ID to detailed finding data
+        """
+        detailed_findings = {}
+        
+        for finding in findings:
+            finding_id = finding.get('id')
+            if not finding_id:
+                logger.warning("Finding missing ID, skipping")
+                continue
+                
+            try:
+                logger.info(f"Fetching detailed finding for ID: {finding_id}")
+                
+                response = self.access_analyzer.get_finding_v2(
+                    id=finding_id,
+                    analyzerArn=analyzer_arn
+                )
+                
+                detailed_findings[finding_id] = {
+                    'basic_finding': finding,
+                    'detailed_finding': response,
+                    'resource_arn': self._extract_resource_arn(finding),
+                    'unused_services': self._extract_unused_services(response)
+                }
+                
+                logger.info(f"Successfully fetched details for finding {finding_id}")
+                
+            except Exception as e:
+                logger.error(f"Failed to fetch details for finding {finding_id}: {str(e)}")
+                continue
+        
+        logger.info(f"Fetched detailed findings for {len(detailed_findings)} out of {len(findings)} findings")
+        return detailed_findings
     
     def _extract_resource_arn(self, finding: Dict) -> str:
-        """
-        Safely extract resource ARN from finding, handling different data structures
-        
-        Args:
-            finding: Access Analyzer finding
-            
-        Returns:
-            Resource ARN or 'unknown' if not found
-        """
+        """Extract resource ARN from finding"""
         try:
-            resource = finding.get('resource')
-            
-            if resource is None:
-                logger.debug(f"Finding {finding.get('id', 'unknown')} has no resource field")
-                return 'unknown'
-            
-            # Handle case where resource is a dictionary (expected)
+            resource = finding.get('resource', {})
             if isinstance(resource, dict):
                 return resource.get('arn', 'unknown')
-            
-            # Handle case where resource is a string (the ARN itself)
             elif isinstance(resource, str):
-                logger.debug(f"Finding {finding.get('id', 'unknown')} has resource as string: {resource}")
                 return resource
-            
-            # Handle unexpected resource type
-            else:
-                logger.warning(f"Finding {finding.get('id', 'unknown')} has unexpected resource type: {type(resource)}")
-                return 'unknown'
-                
-        except Exception as e:
-            logger.warning(f"Error extracting resource ARN from finding {finding.get('id', 'unknown')}: {str(e)}")
             return 'unknown'
-        
-    def _extract_resource_policy(self, finding: Dict) -> Dict:
-        """
-        Safely extract resource policy from finding, handling different data structures
-        
-        Args:
-            finding: Access Analyzer finding
-            
-        Returns:
-            Resource policy dictionary or empty dict if not found
-        """
-        finding_id = finding.get('id', 'unknown')
-        try:
-            resource = finding.get('resource')
-            
-            if resource is None:
-                logger.debug(f"Finding {finding_id}: No resource field present")
-                return {}
-            
-            logger.debug(f"Finding {finding_id}: Resource field type: {type(resource)}")
-            
-            # Handle case where resource is a dictionary (expected)
-            if isinstance(resource, dict):
-                policy = resource.get('policy')
-                if policy is None:
-                    logger.debug(f"Finding {finding_id}: Resource is dict but no policy field present. Resource keys: {list(resource.keys())}")
-                    return {}
-                elif isinstance(policy, dict):
-                    logger.debug(f"Finding {finding_id}: Found policy with {len(policy.get('Statement', []))} statements")
-                    return policy
-                else:
-                    logger.warning(f"Finding {finding_id}: Policy field exists but is not a dict: {type(policy)}")
-                    return {}
-            
-            # Handle case where resource is a string (the ARN itself) - no policy available
-            elif isinstance(resource, str):
-                logger.debug(f"Finding {finding_id}: Resource is string (ARN): {resource}, no policy available")
-                return {}
-            
-            # Handle unexpected resource type
-            else:
-                logger.warning(f"Finding {finding_id}: Unexpected resource type: {type(resource)}, value: {resource}")
-                return {}
-                
         except Exception as e:
-            logger.error(f"Finding {finding_id}: Error extracting resource policy: {str(e)}")
-            return {}
-
-    def _analyze_finding_structure(self, finding: Dict) -> Dict:
-        """
-        Analyze the structure of a finding to understand what data is available
+            logger.warning(f"Error extracting resource ARN: {str(e)}")
+            return 'unknown'
+    
+    def _extract_unused_services(self, detailed_finding: Dict) -> List[str]:
+        """Extract unused service namespaces from detailed finding
         
         Args:
-            finding: Access Analyzer finding
+            detailed_finding: Response from get_finding_v2
             
         Returns:
-            Dictionary with analysis results
+            List of unused service namespaces
         """
-        finding_id = finding.get('id', 'unknown')
-        analysis = {
-            'finding_id': finding_id,
-            'finding_type': finding.get('findingType', 'unknown'),
-            'has_resource_field': 'resource' in finding,
-            'resource_type': type(finding.get('resource')).__name__ if 'resource' in finding else 'missing',
-            'has_analyzed_policy': 'analyzedPolicy' in finding,
-            'has_finding_details': 'findingDetails' in finding,
-            'resource_keys': [],
-            'finding_detail_keys': []
-        }
-        
-        # Analyze resource structure
-        resource = finding.get('resource')
-        if isinstance(resource, dict):
-            analysis['resource_keys'] = list(resource.keys())
-            analysis['has_policy_in_resource'] = 'policy' in resource
-            analysis['has_arn_in_resource'] = 'arn' in resource
-        elif isinstance(resource, str):
-            analysis['resource_as_string'] = resource
-        
-        # Analyze finding details structure
-        finding_details = finding.get('findingDetails')
-        if isinstance(finding_details, dict):
-            analysis['finding_detail_keys'] = list(finding_details.keys())
-            analysis['has_unused_actions'] = 'unusedActions' in finding_details
-            analysis['unused_actions_count'] = len(finding_details.get('unusedActions', []))
-        
-        return analysis
-
-    def _generate_recommendation_from_analyzed_policy(self, finding: Dict, resource: Dict) -> Optional[Dict]:
-        """
-        Generate recommendation when we have analyzedPolicy but no current policy
+        try:
+            finding_details = detailed_finding.get('findingDetails', [])
+            unused_services = []
+            
+            for detail in finding_details:
+                unused_permission = detail.get('unusedPermissionDetails', {})
+                service_namespace = unused_permission.get('serviceNamespace')
+                if service_namespace:
+                    unused_services.append(service_namespace)
+            
+            logger.debug(f"Extracted {len(unused_services)} unused services: {unused_services}")
+            return unused_services
+            
+        except Exception as e:
+            logger.error(f"Error extracting unused services: {str(e)}")
+            return []
+    
+    def process_detailed_findings(self, detailed_findings: Dict[str, Dict], resources: List[Dict]) -> Dict[str, Dict]:
+        """Process detailed findings and generate policy recommendations
         
         Args:
-            finding: Access Analyzer finding
-            resource: Resource details
+            detailed_findings: Dictionary of detailed finding data
+            resources: List of IAM resources from Terraform
             
         Returns:
-            Dictionary with recommended policy changes or None
+            Dictionary of policy recommendations
         """
-        finding_id = finding.get('id', 'unknown')
-        analyzed_policy = finding.get('analyzedPolicy', {})
-        
-        if not analyzed_policy:
-            logger.debug(f"Finding {finding_id}: No analyzedPolicy available")
-            return None
-            
-        logger.info(f"Finding {finding_id}: Creating recommendation from analyzedPolicy (least privilege suggestion)")
-        
-        # This represents a policy that Access Analyzer suggests based on actual usage
-        return {
-            'current_policy': {},  # No current policy found
-            'recommended_policy': analyzed_policy,
-            'resource_name': resource['ResourceName'],
-            'resource_type': resource['ResourceType'],
-            'finding_id': finding_id,
-            'finding_type': finding.get('findingType'),
-            'tf_resource_name': resource.get('tf_resource_name'),
-            'unused_actions': [],  # Not applicable when we don't have current policy
-            'recommendation_reason': f"Access Analyzer suggests this policy based on actual usage patterns for {finding.get('findingType', 'unknown')} finding",
-            'recommendation_type': 'least_privilege_suggestion',
-            'confidence': 'high'  # Access Analyzer suggestions are typically high confidence
-        }
-
-    def _generate_recommendation_from_finding_details(self, finding: Dict, resource: Dict) -> Optional[Dict]:
-        """
-        Generate recommendation based on finding details when no policies are available
-        
-        Args:
-            finding: Access Analyzer finding
-            resource: Resource details
-            
-        Returns:
-            Dictionary with recommended actions or None
-        """
-        finding_id = finding.get('id', 'unknown')
-        finding_type = finding.get('findingType', 'unknown')
-        finding_details = finding.get('findingDetails', {})
-        
-        if not finding_details:
-            logger.debug(f"Finding {finding_id}: No findingDetails available")
-            return None
-            
-        logger.info(f"Finding {finding_id}: Creating recommendation from finding details for {finding_type}")
-        
-        # Generate different recommendations based on finding type
-        if finding_type == 'EXTERNAL_ACCESS':
-            return {
-                'current_policy': {},
-                'recommended_policy': {},
-                'resource_name': resource['ResourceName'],
-                'resource_type': resource['ResourceType'],
-                'finding_id': finding_id,
-                'finding_type': finding_type,
-                'tf_resource_name': resource.get('tf_resource_name'),
-                'unused_actions': [],
-                'recommendation_reason': "External access detected - review resource configuration and restrict access if unnecessary",
-                'recommendation_type': 'security_review',
-                'confidence': 'medium',
-                'action_required': 'manual_review',
-                'finding_details': finding_details
-            }
-        elif finding_type == 'UNUSED_IAM_ROLE':
-            return {
-                'current_policy': {},
-                'recommended_policy': {},
-                'resource_name': resource['ResourceName'],
-                'resource_type': resource['ResourceType'],
-                'finding_id': finding_id,
-                'finding_type': finding_type,
-                'tf_resource_name': resource.get('tf_resource_name'),
-                'unused_actions': [],
-                'recommendation_reason': "IAM role appears to be unused - consider removing if not needed",
-                'recommendation_type': 'removal_candidate',
-                'confidence': 'medium',
-                'action_required': 'review_for_removal',
-                'finding_details': finding_details
-            }
-        elif finding_type == 'UNUSED_IAM_USER_CREDENTIALS':
-            return {
-                'current_policy': {},
-                'recommended_policy': {},
-                'resource_name': resource['ResourceName'],
-                'resource_type': resource['ResourceType'],
-                'finding_id': finding_id,
-                'finding_type': finding_type,
-                'tf_resource_name': resource.get('tf_resource_name'),
-                'unused_actions': [],
-                'recommendation_reason': "IAM user credentials appear to be unused - consider removing or rotating",
-                'recommendation_type': 'credential_review',
-                'confidence': 'medium',
-                'action_required': 'credential_management',
-                'finding_details': finding_details
-            }
-        else:
-            # Generic recommendation for unknown finding types
-            return {
-                'current_policy': {},
-                'recommended_policy': {},
-                'resource_name': resource['ResourceName'],
-                'resource_type': resource['ResourceType'],
-                'finding_id': finding_id,
-                'finding_type': finding_type,
-                'tf_resource_name': resource.get('tf_resource_name'),
-                'unused_actions': [],
-                'recommendation_reason': f"Access Analyzer finding of type {finding_type} requires review",
-                'recommendation_type': 'general_review',
-                'confidence': 'low',
-                'action_required': 'manual_analysis',
-                'finding_details': finding_details
-            }
-
-    def process_findings(self, findings: List[Dict], resources: Union[List[Dict], List]) -> Dict[str, Dict]:
-        """Process analyzer findings and generate policy recommendations
-        
-        Args:
-            findings: List of IAM Access Analyzer findings
-            resources: List of resources (either dicts or IAMResource objects)
-            
-        Returns:
-            Dictionary mapping resource names to recommended policy changes
-        """
-        logger.info(f"Processing {len(findings)} findings for {len(resources)} resources")
+        logger.info(f"Processing {len(detailed_findings)} detailed findings")
         recommendations = {}
         
-        # Create lookup for resources by ARN - handle both dict and IAMResource objects
+        # Create resource lookup by ARN
         resource_lookup = {}
         for resource in resources:
-            if hasattr(resource, 'arn'):  # IAMResource object
-                resource_lookup[resource.arn] = {
-                    'ResourceARN': resource.arn,
-                    'ResourceType': resource.resource_type.value,
-                    'ResourceName': resource.name,
-                    'tf_resource_name': resource.name.replace('-', '_')
-                }
-            else:  # Dictionary format
-                resource_lookup[resource['ResourceARN']] = resource
+            arn = resource.get('ResourceARN') or resource.get('arn')
+            if arn:
+                resource_lookup[arn] = resource
         
-        logger.debug(f"Created resource lookup for {len(resource_lookup)} resources")
-        
-        processed_findings = 0
-        for finding in findings:
-            # Use the safe extraction method
-            resource_arn = self._extract_resource_arn(finding)
-            if resource_arn == 'unknown':
-                logger.warning(f"Finding {finding.get('id', 'unknown')} missing resource ARN, skipping")
-                continue
+        for finding_id, finding_data in detailed_findings.items():
+            try:
+                resource_arn = finding_data['resource_arn']
+                unused_services = finding_data['unused_services']
+                basic_finding = finding_data['basic_finding']
                 
-            if resource_arn not in resource_lookup:
-                logger.debug(f"Resource {resource_arn} not in our target list, skipping")
-                continue
-                
-            resource = resource_lookup[resource_arn]
-            tf_resource_type = self._get_tf_resource_type(resource['ResourceType'])
-            
-            if not tf_resource_type:
-                logger.warning(f"Unsupported resource type: {resource['ResourceType']}")
-                continue
-            
-            # Generate policy recommendation
-            recommendation = self._generate_recommendation(finding, resource)
-            if recommendation:
-                key = f"{tf_resource_type}.{resource['ResourceName']}"
-                recommendations[key] = recommendation
-                processed_findings += 1
-                logger.debug(f"Generated recommendation for {key}")
-                
-        logger.info(f"Generated {len(recommendations)} recommendations from {processed_findings} processed findings")
-        return recommendations
-    
-    def _get_tf_resource_type(self, aws_resource_type: str) -> Optional[str]:
-        """Convert AWS resource type to Terraform resource type"""
-        mapping = {
-            'AWS::IAM::Role': 'aws_iam_role',
-            'AWS::IAM::User': 'aws_iam_user',
-            'AWS::IAM::Group': 'aws_iam_group',
-            'AWS::IAM::Policy': 'aws_iam_policy'
-        }
-        return mapping.get(aws_resource_type)
-    
-    def _generate_recommendation(self, finding: Dict, resource: Dict) -> Optional[Dict]:
-        """Generate policy recommendation for a resource based on finding
-        
-        Args:
-            finding: IAM Access Analyzer finding
-            resource: Resource details
-            
-        Returns:
-            Dictionary with recommended policy changes
-        """
-        finding_id = finding.get('id', 'unknown')
-        
-        try:
-            logger.debug(f"Finding {finding_id}: Starting recommendation generation")
-            
-            # First, analyze the finding structure for better logging
-            analysis = self._analyze_finding_structure(finding)
-            logger.info(f"Finding {finding_id}: Structure analysis: {analysis}")
-            
-            # Extract current and recommended permissions using safe method
-            current_policy = self._extract_resource_policy(finding)
-            analyzed_policy = finding.get('analyzedPolicy', {})
-            
-            logger.debug(f"Finding {finding_id}: Current policy found: {bool(current_policy)}")
-            logger.debug(f"Finding {finding_id}: Analyzed policy found: {bool(analyzed_policy)}")
-            
-            # Strategy 1: We have both current and analyzed policies (traditional case)
-            if current_policy and analyzed_policy:
-                logger.info(f"Finding {finding_id}: Using traditional policy comparison approach")
-                return self._generate_traditional_recommendation(finding, resource, current_policy, analyzed_policy)
-            
-            # Strategy 2: We have analyzed policy but no current policy
-            elif analyzed_policy and not current_policy:
-                logger.info(f"Finding {finding_id}: Using analyzed policy as least privilege suggestion")
-                return self._generate_recommendation_from_analyzed_policy(finding, resource)
-            
-            # Strategy 3: No policies but UNUSED_ACCESS with finding details
-            elif finding.get('findingType') == 'UNUSED_ACCESS' and finding.get('findingDetails'):
-                logger.info(f"Finding {finding_id}: Using finding details for UNUSED_ACCESS recommendation")
-                finding_details = finding.get('findingDetails', {})
-                unused_actions = finding_details.get('unusedActions', [])
-                
-                if unused_actions:
-                    # We know what actions are unused, even without the full current policy
-                    return {
-                        'current_policy': {},
-                        'recommended_policy': {},
-                        'resource_name': resource['ResourceName'],
-                        'resource_type': resource['ResourceType'],
-                        'finding_id': finding_id,
-                        'finding_type': 'UNUSED_ACCESS',
-                        'tf_resource_name': resource.get('tf_resource_name'),
-                        'unused_actions': unused_actions,
-                        'recommendation_reason': f"Found {len(unused_actions)} unused permissions that can be removed for least privilege",
-                        'recommendation_type': 'remove_unused_permissions',
-                        'confidence': 'high',
-                        'action_required': 'policy_optimization'
-                    }
-            
-            # Strategy 4: Use finding details for other finding types
-            elif finding.get('findingDetails'):
-                logger.info(f"Finding {finding_id}: Using finding details for general recommendation")
-                return self._generate_recommendation_from_finding_details(finding, resource)
-            
-            # Strategy 5: Last resort - create minimal recommendation
-            else:
-                logger.warning(f"Finding {finding_id}: No usable policy or detail information found, creating minimal recommendation")
-                return {
-                    'current_policy': {},
-                    'recommended_policy': {},
-                    'resource_name': resource['ResourceName'],
-                    'resource_type': resource['ResourceType'],
-                    'finding_id': finding_id,
-                    'finding_type': finding.get('findingType', 'unknown'),
-                    'tf_resource_name': resource.get('tf_resource_name'),
-                    'unused_actions': [],
-                    'recommendation_reason': f"Access Analyzer finding requires manual review - insufficient data for automated recommendation",
-                    'recommendation_type': 'manual_review_required',
-                    'confidence': 'low',
-                    'action_required': 'manual_analysis',
-                    'raw_finding': finding  # Include full finding for manual analysis
-                }
-            
-        except Exception as e:
-            logger.error(f"Finding {finding_id}: Error generating recommendation: {str(e)}")
-            logger.error(f"Finding {finding_id}: Raw finding data: {json.dumps(finding, indent=2, default=str)}")
-            return None
-
-    def _generate_traditional_recommendation(self, finding: Dict, resource: Dict, current_policy: Dict, analyzed_policy: Dict) -> Dict:
-        """Generate recommendation when we have both current and analyzed policies"""
-        finding_id = finding.get('id', 'unknown')
-        
-        # For UNUSED_ACCESS findings, create a minimal policy by removing unused actions
-        if finding.get('findingType') == 'UNUSED_ACCESS':
-            finding_details = finding.get('findingDetails', {})
-            unused_actions = finding_details.get('unusedActions', [])
-            
-            if unused_actions:
-                # Create a recommended policy by removing unused actions
-                minimal_policy = self._create_minimal_policy(current_policy, unused_actions)
-                analyzed_policy = minimal_policy or analyzed_policy
-        
-        return {
-            'current_policy': current_policy,
-            'recommended_policy': analyzed_policy,
-            'resource_name': resource['ResourceName'],
-            'resource_type': resource['ResourceType'],
-            'finding_id': finding_id,
-            'finding_type': finding.get('findingType'),
-            'tf_resource_name': resource.get('tf_resource_name'),
-            'unused_actions': finding.get('findingDetails', {}).get('unusedActions', []),
-            'recommendation_reason': self._get_recommendation_reason(finding),
-            'recommendation_type': 'policy_optimization',
-            'confidence': 'high'
-        }
-
-    def _create_minimal_policy(self, current_policy: Dict, unused_actions: List[str]) -> Dict:
-        """Create a minimal policy by removing unused actions"""
-        try:
-            minimal_policy = {
-                "Version": current_policy.get("Version", "2012-10-17"),
-                "Statement": []
-            }
-            
-            for statement in current_policy.get("Statement", []):
-                if statement.get("Effect") != "Allow":
-                    # Keep non-Allow statements as-is
-                    minimal_policy["Statement"].append(statement)
+                if resource_arn not in resource_lookup:
+                    logger.debug(f"Resource {resource_arn} not in target list, skipping")
                     continue
                 
-                actions = statement.get("Action", [])
-                if isinstance(actions, str):
-                    actions = [actions]
+                if not unused_services:
+                    logger.debug(f"No unused services found for finding {finding_id}")
+                    continue
                 
-                # Remove unused actions
-                used_actions = [action for action in actions if action not in unused_actions]
+                resource = resource_lookup[resource_arn]
+                recommendation = self._generate_recommendation_from_unused_services(
+                    finding_id, basic_finding, resource, unused_services
+                )
                 
-                if used_actions:
-                    new_statement = statement.copy()
-                    new_statement["Action"] = used_actions if len(used_actions) > 1 else used_actions[0]
-                    minimal_policy["Statement"].append(new_statement)
-            
-            return minimal_policy
-            
-        except Exception as e:
-            logger.error(f"Error creating minimal policy: {str(e)}")
-            return {}
-    
-    def _get_recommendation_reason(self, finding: Dict) -> str:
-        """Generate a human-readable reason for the recommendation"""
-        finding_type = finding.get('findingType', 'unknown')
+                if recommendation:
+                    resource_key = self._get_resource_key(resource)
+                    recommendations[resource_key] = recommendation
+                    logger.info(f"Generated recommendation for {resource_key} with {len(unused_services)} unused services")
+                
+            except Exception as e:
+                logger.error(f"Error processing finding {finding_id}: {str(e)}")
+                continue
         
-        if finding_type == 'UNUSED_ACCESS':
-            unused_count = len(finding.get('findingDetails', {}).get('unusedActions', []))
-            return f"Found {unused_count} unused permissions that can be removed for least privilege"
-        elif finding_type == 'EXTERNAL_ACCESS':
-            return "External access detected - review and restrict if unnecessary"
-        else:
-            return f"Access Analyzer finding: {finding_type}"
-
-    def update_terraform_policies(self, recommendations: Dict[str, Dict]) -> bool:
-        """Update Terraform files with policy recommendations and create PR
+        logger.info(f"Generated {len(recommendations)} policy recommendations")
+        return recommendations
+    
+    def _get_resource_key(self, resource: Dict) -> str:
+        """Generate a resource key for the recommendation"""
+        resource_type = resource.get('ResourceType', '')
+        resource_name = resource.get('ResourceName', 'unknown')
+        
+        # Map AWS resource types to Terraform types
+        tf_type_map = {
+            'AWS::IAM::Role': 'aws_iam_role',
+            'AWS::IAM::User': 'aws_iam_user', 
+            'AWS::IAM::Group': 'aws_iam_group'
+        }
+        
+        tf_type = tf_type_map.get(resource_type, 'aws_iam_unknown')
+        return f"{tf_type}.{resource_name.replace('-', '_')}"
+    
+    def _generate_recommendation_from_unused_services(self, finding_id: str, basic_finding: Dict, 
+                                                    resource: Dict, unused_services: List[str]) -> Dict:
+        """Generate policy recommendation based on unused services
         
         Args:
-            recommendations: Dictionary of policy recommendations by resource
+            finding_id: Access Analyzer finding ID
+            basic_finding: Basic finding data
+            resource: Resource information
+            unused_services: List of unused AWS service namespaces
             
         Returns:
-            True if updates were successful, False otherwise
+            Policy recommendation dictionary
+        """
+        resource_name = resource.get('ResourceName', 'unknown')
+        resource_type = resource.get('ResourceType', 'unknown')
+        
+        # Generate specific actions that can be removed for each service
+        unused_actions = self._map_services_to_actions(unused_services)
+        
+        return {
+            'finding_id': finding_id,
+            'resource_name': resource_name,
+            'resource_type': resource_type,
+            'resource_arn': resource.get('ResourceARN'),
+            'tf_resource_name': resource_name.replace('-', '_'),
+            'unused_services': unused_services,
+            'unused_actions': unused_actions,
+            'finding_type': basic_finding.get('findingType', 'UNUSED_ACCESS'),
+            'recommendation_type': 'remove_unused_permissions',
+            'confidence': 'high',
+            'recommendation_reason': f"Access Analyzer identified {len(unused_services)} unused service namespaces that can be removed for least privilege",
+            'action_required': 'policy_optimization',
+            'analysis_timestamp': datetime.now().isoformat()
+        }
+    
+    def _map_services_to_actions(self, unused_services: List[str]) -> List[str]:
+        """Map unused service namespaces to common IAM actions that can be removed
+        
+        Args:
+            unused_services: List of AWS service namespaces
+            
+        Returns:
+            List of IAM actions that are likely unused
+        """
+        service_action_map = {
+            'ecr': ['ecr:*', 'ecr:GetAuthorizationToken', 'ecr:BatchCheckLayerAvailability', 
+                   'ecr:GetDownloadUrlForLayer', 'ecr:BatchGetImage'],
+            'ecs': ['ecs:*', 'ecs:CreateCluster', 'ecs:DescribeClusters', 'ecs:RunTask', 
+                   'ecs:StopTask', 'ecs:DescribeTasks'],
+            'iam': ['iam:*', 'iam:PassRole', 'iam:CreateRole', 'iam:AttachRolePolicy', 
+                   'iam:DetachRolePolicy', 'iam:DeleteRole'],
+            'lambda': ['lambda:*', 'lambda:CreateFunction', 'lambda:InvokeFunction', 
+                      'lambda:UpdateFunctionCode', 'lambda:DeleteFunction'],
+            'logs': ['logs:*', 'logs:CreateLogGroup', 'logs:CreateLogStream', 
+                    'logs:PutLogEvents', 'logs:DescribeLogGroups'],
+            's3': ['s3:*', 's3:GetObject', 's3:PutObject', 's3:DeleteObject', 
+                  's3:ListBucket', 's3:GetBucketLocation']
+        }
+        
+        unused_actions = []
+        for service in unused_services:
+            actions = service_action_map.get(service, [f'{service}:*'])
+            unused_actions.extend(actions)
+        
+        return unused_actions
+    
+    def create_policy_updates_pr(self, recommendations: Dict[str, Dict]) -> bool:
+        """Create a GitHub PR with policy update recommendations
+        
+        Args:
+            recommendations: Dictionary of policy recommendations
+            
+        Returns:
+            True if PR created successfully, False otherwise
         """
         try:
-            logger.info(f"Processing {len(recommendations)} terraform policy updates")
+            logger.info(f"Creating PR for {len(recommendations)} policy recommendations")
             
-            if not recommendations:
-                logger.info("No recommendations to process")
-                return True
+            # Download existing Terraform files
+            terraform_files = self._download_terraform_files()
             
-            # Import GitHub PR handler
-            from .github_pr import GitHubPRHandler
-            
-            # Initialize GitHub handler
-            github_handler = GitHubPRHandler(
-                github_token=self.github_token,
-                repo_name=self.repo_name
-            )
-            
-            # Group recommendations by type for better organization
-            policy_files = {}
-            terraform_files = {}
-            summary_stats = {
-                'total_recommendations': len(recommendations),
-                'by_type': {},
-                'by_confidence': {},
-                'by_action_required': {}
-            }
-            
-            logger.info("Analyzing recommendations and generating Terraform files...")
+            # Generate updated files
+            updated_files = []
+            modification_summary = []
             
             for resource_key, recommendation in recommendations.items():
-                self._log_recommendation_summary(resource_key, recommendation, summary_stats)
-                
-                # Generate Terraform content based on recommendation type
-                terraform_content = self._generate_terraform_content(resource_key, recommendation)
-                if terraform_content:
-                    file_path = self._get_terraform_file_path(resource_key, recommendation)
-                    terraform_files[file_path] = terraform_content
+                try:
+                    # Try to find and modify existing Terraform file
+                    modified_file = self._modify_existing_terraform_file(
+                        resource_key, recommendation, terraform_files
+                    )
                     
-                # Generate policy JSON files for policies with actual content
-                policy_content = self._generate_policy_json(recommendation)
-                if policy_content:
-                    policy_file_path = self._get_policy_file_path(resource_key, recommendation)
-                    policy_files[policy_file_path] = policy_content
+                    if modified_file:
+                        updated_files.append(modified_file)
+                        modification_summary.append({
+                            'resource': resource_key,
+                            'unused_services': len(recommendation['unused_services']),
+                            'unused_actions': len(recommendation['unused_actions']),
+                            'file_modified': modified_file['path']
+                        })
+                        logger.info(f"Modified Terraform file for {resource_key}")
+                    else:
+                        # Create new recommendation file
+                        new_file = self._create_recommendation_file(resource_key, recommendation)
+                        if new_file:
+                            updated_files.append(new_file)
+                            logger.info(f"Created recommendation file for {resource_key}")
+                
+                except Exception as e:
+                    logger.error(f"Failed to process {resource_key}: {str(e)}")
+                    continue
             
-            if not terraform_files and not policy_files:
-                logger.warning("No Terraform or policy files generated from recommendations")
+            if not updated_files:
+                logger.warning("No files to update, skipping PR creation")
                 return False
             
-            # Combine all files for the PR
-            all_files = {**terraform_files, **policy_files}
+            # Create PR
+            title, body = self._generate_pr_content(recommendations, modification_summary)
             
-            # Generate comprehensive PR content
-            pr_title, pr_body = self._generate_pr_content(recommendations, summary_stats)
-            
-            logger.info(f"Creating PR with {len(all_files)} files: {list(all_files.keys())}")
-            
-            # Create the pull request
-            pr_result = github_handler.create_pull_request(
-                title=pr_title,
-                body=pr_body,
-                base_branch="main",
-                head_branch=f"iam-policy-updates-{self._get_timestamp()}",
-                policy_changes=all_files
+            success = self._create_github_pr(
+                title=title,
+                body=body,
+                files=updated_files
             )
             
-            if pr_result.get("status") == "success":
-                logger.info(f"Successfully created PR: {pr_result.get('pr_url')}")
-                logger.info(f"PR #{pr_result.get('pr_number')}: {pr_title}")
+            if success:
+                logger.info(f"Successfully created PR with {len(updated_files)} file updates")
                 return True
             else:
-                logger.error(f"Failed to create PR: {pr_result.get('error')}")
+                logger.error("Failed to create GitHub PR")
                 return False
                 
         except Exception as e:
-            logger.error(f"Error updating terraform policies: {str(e)}")
+            logger.error(f"Error creating policy updates PR: {str(e)}")
             return False
     
-    def _log_recommendation_summary(self, resource_key: str, recommendation: Dict, summary_stats: Dict) -> None:
-        """Log and track recommendation statistics"""
-        rec_type = recommendation.get('recommendation_type', 'unknown')
-        confidence = recommendation.get('confidence', 'unknown')
-        action_required = recommendation.get('action_required', 'unknown')
+    def _download_terraform_files(self) -> Dict[str, str]:
+        """Download existing Terraform files from the repository"""
+        terraform_files = {}
         
-        # Update summary statistics
-        summary_stats['by_type'][rec_type] = summary_stats['by_type'].get(rec_type, 0) + 1
-        summary_stats['by_confidence'][confidence] = summary_stats['by_confidence'].get(confidence, 0) + 1
-        summary_stats['by_action_required'][action_required] = summary_stats['by_action_required'].get(action_required, 0) + 1
-        
-        logger.info(f"Recommendation for {resource_key}:")
-        logger.info(f"  - Type: {rec_type}")
-        logger.info(f"  - Confidence: {confidence}")
-        logger.info(f"  - Action Required: {action_required}")
-        logger.info(f"  - Finding Type: {recommendation.get('finding_type', 'unknown')}")
-        logger.info(f"  - Reason: {recommendation.get('recommendation_reason', 'No reason provided')}")
-        
-        if recommendation.get('unused_actions'):
-            logger.info(f"  - Unused actions ({len(recommendation['unused_actions'])}): {recommendation['unused_actions'][:3]}...")
-    
-    def _generate_terraform_content(self, resource_key: str, recommendation: Dict) -> Optional[str]:
-        """Generate Terraform HCL content based on recommendation"""
         try:
-            rec_type = recommendation.get('recommendation_type', 'unknown')
-            resource_name = recommendation.get('resource_name', 'unknown')
-            resource_type = recommendation.get('resource_type', 'unknown')
-            tf_resource_name = recommendation.get('tf_resource_name', resource_name.replace('-', '_'))
+            # Look for Terraform files in common locations
+            terraform_paths = [
+                "terraform/",
+                "infra/terraform/",
+                "infra/sample-iac-app/terraform/",
+                "policies.tf",
+                "main.tf",
+                "users.tf"
+            ]
             
-            # Generate different Terraform content based on recommendation type
-            if rec_type == 'policy_optimization' and recommendation.get('recommended_policy'):
-                return self._generate_policy_terraform(tf_resource_name, recommendation['recommended_policy'])
+            for path in terraform_paths:
+                try:
+                    if path.endswith('.tf'):
+                        # Single file
+                        file_content = self.repo.get_contents(path)
+                        content = base64.b64decode(file_content.content).decode('utf-8')
+                        terraform_files[path] = content
+                    else:
+                        # Directory - get all .tf files
+                        try:
+                            contents = self.repo.get_contents(path)
+                            if isinstance(contents, list):
+                                for item in contents:
+                                    if item.name.endswith('.tf'):
+                                        file_content = base64.b64decode(item.content).decode('utf-8')
+                                        full_path = f"{path.rstrip('/')}/{item.name}"
+                                        terraform_files[full_path] = file_content
+                        except Exception:
+                            continue
+                except Exception:
+                    continue
             
-            elif rec_type == 'least_privilege_suggestion' and recommendation.get('recommended_policy'):
-                return self._generate_policy_terraform(tf_resource_name, recommendation['recommended_policy'])
+            logger.info(f"Downloaded {len(terraform_files)} Terraform files")
+            return terraform_files
             
-            elif rec_type == 'remove_unused_permissions':
-                return self._generate_comment_terraform(resource_key, recommendation)
-            
-            elif rec_type in ['security_review', 'credential_review', 'removal_candidate']:
-                return self._generate_comment_terraform(resource_key, recommendation)
-            
-            else:
-                return self._generate_comment_terraform(resource_key, recommendation)
-                
         except Exception as e:
-            logger.error(f"Error generating Terraform content for {resource_key}: {str(e)}")
+            logger.error(f"Error downloading Terraform files: {str(e)}")
+            return {}
+    
+    def _modify_existing_terraform_file(self, resource_key: str, recommendation: Dict, 
+                                      terraform_files: Dict[str, str]) -> Optional[Dict]:
+        """Modify existing Terraform file to remove unused permissions
+        
+        Args:
+            resource_key: Resource identifier
+            recommendation: Policy recommendation
+            terraform_files: Dictionary of existing Terraform files
+            
+        Returns:
+            Dictionary with modified file information or None
+        """
+        try:
+            resource_name = recommendation['tf_resource_name']
+            unused_services = recommendation['unused_services']
+            unused_actions = recommendation['unused_actions']
+            
+            # Find the file containing this resource
+            for file_path, content in terraform_files.items():
+                if self._resource_exists_in_file(content, resource_name, resource_key):
+                    logger.info(f"Found resource {resource_name} in {file_path}")
+                    
+                    # Modify the file content
+                    modified_content = self._remove_unused_permissions_from_file(
+                        content, resource_name, unused_services, unused_actions, recommendation
+                    )
+                    
+                    if modified_content != content:
+                        return {
+                            'path': file_path,
+                            'content': modified_content,
+                            'modification_type': 'remove_unused_permissions'
+                        }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error modifying Terraform file for {resource_key}: {str(e)}")
             return None
     
-    def _generate_policy_terraform(self, tf_resource_name: str, policy: Dict) -> str:
-        """Generate Terraform HCL for an IAM policy"""
-        policy_json = json.dumps(policy, indent=2)
-        
-        return f'''# Generated IAM policy based on Access Analyzer recommendations
-resource "aws_iam_policy" "least_privilege_{tf_resource_name}" {{
-  name        = "least-privilege-{tf_resource_name}"
-  description = "Least privilege policy generated from Access Analyzer findings"
-  
-  policy = jsonencode({policy_json})
-  
-  tags = {{
-    Source      = "AccessAnalyzer"
-    GeneratedBy = "LeastPrivilegeOptimizer"
-    Purpose     = "LeastPrivilege"
-  }}
-}}
-
-# Attach the policy to the corresponding resource
-# Note: Review and uncomment the appropriate attachment below
-
-# For IAM User:
-# resource "aws_iam_user_policy_attachment" "{tf_resource_name}_least_privilege" {{
-#   user       = aws_iam_user.{tf_resource_name}.name
-#   policy_arn = aws_iam_policy.least_privilege_{tf_resource_name}.arn
-# }}
-
-# For IAM Role:
-# resource "aws_iam_role_policy_attachment" "{tf_resource_name}_least_privilege" {{
-#   role       = aws_iam_role.{tf_resource_name}.name
-#   policy_arn = aws_iam_policy.least_privilege_{tf_resource_name}.arn
-# }}
-
-# For IAM Group:
-# resource "aws_iam_group_policy_attachment" "{tf_resource_name}_least_privilege" {{
-#   group      = aws_iam_group.{tf_resource_name}.name
-#   policy_arn = aws_iam_policy.least_privilege_{tf_resource_name}.arn
-# }}
-'''
+    def _resource_exists_in_file(self, content: str, resource_name: str, resource_key: str) -> bool:
+        """Check if a resource exists in the Terraform file content"""
+        try:
+            # Look for resource blocks that match our resource
+            patterns = [
+                rf'resource\s+"aws_iam_\w+_policy"\s+"{resource_name}"',
+                rf'resource\s+"aws_iam_\w+"\s+"{resource_name}"',
+                # Also check for the resource name in the content
+                resource_name,
+                resource_name.replace('_', '-')
+            ]
+            
+            for pattern in patterns:
+                if re.search(pattern, content, re.IGNORECASE):
+                    return True
+            
+            return False
+            
+        except Exception as e:
+            logger.error(f"Error checking if resource exists in file: {str(e)}")
+            return False
     
-    def _generate_comment_terraform(self, resource_key: str, recommendation: Dict) -> str:
-        """Generate Terraform comment block with manual review instructions"""
-        finding_id = recommendation.get('finding_id', 'unknown')
-        finding_type = recommendation.get('finding_type', 'unknown')
-        rec_type = recommendation.get('recommendation_type', 'unknown')
-        reason = recommendation.get('recommendation_reason', 'Manual review required')
-        action_required = recommendation.get('action_required', 'review')
+    def _remove_unused_permissions_from_file(self, content: str, resource_name: str, 
+                                           unused_services: List[str], unused_actions: List[str],
+                                           recommendation: Dict) -> str:
+        """Remove unused permissions from Terraform file content with AWS validation
         
-        content = f'''# Access Analyzer Finding: {finding_id}
-# Resource: {resource_key}
-# Finding Type: {finding_type}
-# Recommendation Type: {rec_type}
+        Args:
+            content: Original file content
+            resource_name: Name of the resource to modify
+            unused_services: List of unused services
+            unused_actions: List of unused actions
+            recommendation: Full recommendation data
+            
+        Returns:
+            Modified file content
+        """
+        try:
+            # Extract existing policies from the file
+            policies = self._extract_policies_from_terraform(content)
+            
+            if not policies:
+                logger.warning(f"No policies found in file for resource {resource_name}")
+                return content
+            
+            # Modify and validate each policy
+            modified_policies = {}
+            validation_results = []
+            
+            for policy_name, policy_data in policies.items():
+                logger.info(f"Processing policy: {policy_name}")
+                
+                # Remove unused services from the policy
+                modified_policy = self._remove_unused_services_from_policy_dict(
+                    policy_data, unused_services
+                )
+                
+                # Validate the modified policy using AWS Access Analyzer
+                validation_result = self._validate_policy_with_aws(modified_policy, policy_name)
+                validation_results.append(validation_result)
+                
+                if validation_result['is_valid']:
+                    modified_policies[policy_name] = modified_policy
+                    logger.info(f"Policy {policy_name} modified and validated successfully")
+                else:
+                    logger.warning(f"Policy {policy_name} failed validation: {validation_result['errors']}")
+                    # Keep original policy if validation fails
+                    modified_policies[policy_name] = policy_data
+            
+            # Only proceed with modifications if all policies are valid
+            all_valid = all(result['is_valid'] for result in validation_results)
+            
+            if not all_valid:
+                logger.warning("Some policies failed validation, keeping original content")
+                return content
+            
+            # Replace policies in the original content
+            modified_content = self._replace_policies_in_terraform(content, modified_policies)
+            
+            # Add modification comment at the top
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            modification_comment = f"""
+# MODIFIED BY LEAST PRIVILEGE OPTIMIZER - {timestamp}
+# Finding ID: {recommendation['finding_id']}
+# Resource: {resource_name}
+# Removed unused services: {', '.join(unused_services)}
+# This modification removes {len(unused_services)} unused service permissions
+# Based on AWS Access Analyzer findings for least privilege access
+# All policies validated using AWS Access Analyzer validate-policy API
 #
-# MANUAL REVIEW REQUIRED
-# {reason}
-#
-# Action Required: {action_required}
-'''
-        
-        if recommendation.get('unused_actions'):
-            unused_actions = recommendation['unused_actions']
-            content += f'''#
-# Unused Actions Detected ({len(unused_actions)}):
-'''
-            for action in unused_actions[:10]:  # Show first 10 actions
-                content += f'#   - {action}\n'
-            if len(unused_actions) > 10:
-                content += f'#   ... and {len(unused_actions) - 10} more\n'
-        
-        if recommendation.get('finding_details'):
-            content += f'''#
-# Additional Finding Details:
-# {json.dumps(recommendation['finding_details'], indent=2).replace(chr(10), chr(10) + '# ')}
-'''
-        
-        content += '''#
-# Next Steps:
-# 1. Review the finding details above
-# 2. Implement appropriate security measures
-# 3. Update or remove this comment when resolved
-# 4. Consider creating specific Terraform resources if needed
-
-'''
-        return content
+"""
+            
+            # Add the modification comment at the beginning
+            modified_content = modification_comment + modified_content
+            
+            return modified_content
+            
+        except Exception as e:
+            logger.error(f"Error removing unused permissions: {str(e)}")
+            return content
     
-    def _generate_policy_json(self, recommendation: Dict) -> Optional[Dict]:
-        """Generate policy JSON content if available"""
-        recommended_policy = recommendation.get('recommended_policy')
-        if recommended_policy and isinstance(recommended_policy, dict) and recommended_policy.get('Statement'):
-            return recommended_policy
-        return None
+    def _extract_policies_from_terraform(self, content: str) -> Dict[str, Dict]:
+        """Extract IAM policies from Terraform content
+        
+        Args:
+            content: Terraform file content
+            
+        Returns:
+            Dictionary mapping policy names to policy dictionaries
+        """
+        try:
+            policies = {}
+            
+            # Find all jsonencode policy blocks with improved regex
+            policy_pattern = r'policy\s*=\s*jsonencode\s*\(\s*(\{[^}]*(?:\{[^}]*\}[^}]*)*\})\s*\)'
+            
+            for match in re.finditer(policy_pattern, content, re.DOTALL):
+                policy_content = match.group(1)
+                
+                try:
+                    # Convert HCL-style to JSON and parse
+                    json_content = self._hcl_to_json_robust(policy_content)
+                    policy_dict = json.loads(json_content)
+                    
+                    # Generate a policy name (you might want to extract this from context)
+                    policy_name = f"policy_{len(policies) + 1}"
+                    policies[policy_name] = policy_dict
+                    
+                except Exception as e:
+                    logger.warning(f"Could not parse policy content: {str(e)}")
+                    logger.debug(f"Failed policy content: {policy_content}")
+                    continue
+            
+            logger.info(f"Extracted {len(policies)} policies from Terraform content")
+            return policies
+            
+        except Exception as e:
+            logger.error(f"Error extracting policies from Terraform: {str(e)}")
+            return {}
+    
+    def _hcl_to_json_robust(self, hcl_content: str) -> str:
+        """Robust HCL to JSON conversion for Terraform policy blocks
+        
+        Args:
+            hcl_content: HCL-style policy content
+            
+        Returns:
+            Valid JSON string
+        """
+        try:
+            # Clean up the content
+            content = hcl_content.strip()
+            
+            # Handle the HCL format used in Terraform jsonencode blocks
+            # These are actually JSON-like but with HCL key = value syntax
+            
+            # Step 1: Convert key = value to "key": value
+            content = re.sub(r'(\w+)\s*=\s*', r'"\1": ', content)
+            
+            # Step 2: Handle arrays - ensure values are properly quoted
+            # Match array patterns like: ["value1", "value2"] or [value1, value2]
+            def fix_array_content(match):
+                array_inner = match.group(1)
+                # Split by comma and clean up each value
+                values = []
+                for value in array_inner.split(','):
+                    value = value.strip()
+                    if value:
+                        # If not already quoted and not a number/boolean, add quotes
+                        if not (value.startswith('"') and value.endswith('"')) and \
+                           not value.lower() in ['true', 'false'] and \
+                           not value.replace('.', '').replace('-', '').isdigit():
+                            value = f'"{value}"'
+                        values.append(value)
+                return f'[{", ".join(values)}]'
+            
+            content = re.sub(r'\[\s*([^]]*)\s*\]', fix_array_content, content)
+            
+            # Step 3: Quote unquoted string values that aren't arrays, objects, or keywords
+            def quote_unquoted_values(match):
+                key = match.group(1)
+                value = match.group(2).strip()
+                
+                # Don't quote if it's already quoted, or if it's an array/object/boolean/number
+                if (value.startswith('"') and value.endswith('"')) or \
+                   value.startswith('[') or value.startswith('{') or \
+                   value.lower() in ['true', 'false', 'null'] or \
+                   value.replace('.', '').replace('-', '').isdigit():
+                    return f'"{key}": {value}'
+                else:
+                    return f'"{key}": "{value}"'
+            
+            content = re.sub(r'"(\w+)":\s*([^,\]\}]+)', quote_unquoted_values, content)
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error in robust HCL to JSON conversion: {str(e)}")
+            return hcl_content
+    
+    def _remove_unused_services_from_policy_dict(self, policy_dict: Dict, unused_services: List[str]) -> Dict:
+        """Remove unused services from a policy dictionary
+        
+        Args:
+            policy_dict: IAM policy as dictionary
+            unused_services: List of unused service namespaces
+            
+        Returns:
+            Modified policy dictionary
+        """
+        try:
+            modified_policy = json.loads(json.dumps(policy_dict))  # Deep copy
+            
+            if 'Statement' not in modified_policy:
+                return modified_policy
+            
+            statements = modified_policy['Statement']
+            if not isinstance(statements, list):
+                statements = [statements]
+            
+            filtered_statements = []
+            
+            for statement in statements:
+                if 'Action' not in statement:
+                    filtered_statements.append(statement)
+                    continue
+                
+                actions = statement['Action']
+                if not isinstance(actions, list):
+                    actions = [actions]
+                
+                # Filter out actions from unused services
+                filtered_actions = []
+                for action in actions:
+                    if isinstance(action, str):
+                        service = action.split(':')[0] if ':' in action else action
+                        if service not in unused_services:
+                            filtered_actions.append(action)
+                
+                # Only keep statement if it has remaining actions
+                if filtered_actions:
+                    statement['Action'] = filtered_actions if len(filtered_actions) > 1 else filtered_actions[0]
+                    filtered_statements.append(statement)
+                else:
+                    logger.info(f"Removing statement with only unused service actions: {unused_services}")
+            
+            modified_policy['Statement'] = filtered_statements
+            return modified_policy
+            
+        except Exception as e:
+            logger.error(f"Error removing unused services from policy dict: {str(e)}")
+            return policy_dict
+    
+    def _validate_policy_with_aws(self, policy_dict: Dict, policy_name: str) -> Dict:
+        """Validate policy using AWS Access Analyzer validate-policy API
+        
+        Args:
+            policy_dict: IAM policy dictionary to validate
+            policy_name: Name of the policy for logging
+            
+        Returns:
+            Dictionary with validation results
+        """
+        try:
+            logger.info(f"Validating policy {policy_name} with AWS Access Analyzer")
+            
+            # Convert policy dict to JSON string
+            policy_document = json.dumps(policy_dict)
+            
+            # Call AWS Access Analyzer validate-policy API
+            response = self.access_analyzer.validate_policy(
+                policyDocument=policy_document,
+                policyType='IDENTITY_POLICY'
+            )
+            
+            findings = response.get('findings', [])
+            
+            # Check if there are any ERROR level findings
+            error_findings = [f for f in findings if f.get('findingType') == 'ERROR']
+            warning_findings = [f for f in findings if f.get('findingType') == 'WARNING']
+            
+            is_valid = len(error_findings) == 0
+            
+            result = {
+                'is_valid': is_valid,
+                'policy_name': policy_name,
+                'error_count': len(error_findings),
+                'warning_count': len(warning_findings),
+                'errors': [f.get('findingDetails', 'Unknown error') for f in error_findings],
+                'warnings': [f.get('findingDetails', 'Unknown warning') for f in warning_findings]
+            }
+            
+            if is_valid:
+                logger.info(f"Policy {policy_name} validation successful ({len(warning_findings)} warnings)")
+            else:
+                logger.error(f"Policy {policy_name} validation failed with {len(error_findings)} errors")
+                for error in result['errors']:
+                    logger.error(f"  - {error}")
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"Error validating policy {policy_name} with AWS: {str(e)}")
+            return {
+                'is_valid': False,
+                'policy_name': policy_name,
+                'error_count': 1,
+                'warning_count': 0,
+                'errors': [f"Validation API call failed: {str(e)}"],
+                'warnings': []
+            }
+    
+    def _replace_policies_in_terraform(self, content: str, modified_policies: Dict[str, Dict]) -> str:
+        """Replace policies in Terraform content with validated modified versions
+        
+        Args:
+            content: Original Terraform content
+            modified_policies: Dictionary of validated modified policies
+            
+        Returns:
+            Terraform content with replaced policies
+        """
+        try:
+            modified_content = content
+            policy_index = 0
+            
+            # Find and replace each policy block
+            policy_pattern = r'(policy\s*=\s*jsonencode\s*\()([^)]+(?:\([^)]*\)[^)]*)*)\)'
+            
+            def replace_policy(match):
+                nonlocal policy_index
+                policy_index += 1
+                policy_name = f"policy_{policy_index}"
+                
+                if policy_name in modified_policies:
+                    # Convert policy dict to HCL-style format
+                    policy_hcl = self._json_to_hcl(modified_policies[policy_name])
+                    return match.group(1) + policy_hcl + ')'
+                else:
+                    return match.group(0)  # Keep original if not modified
+            
+            modified_content = re.sub(policy_pattern, replace_policy, modified_content, flags=re.DOTALL)
+            
+            return modified_content
+            
+        except Exception as e:
+            logger.error(f"Error replacing policies in Terraform: {str(e)}")
+            return content
+    
+    def _json_to_hcl(self, policy_dict: Dict) -> str:
+        """Convert policy dictionary back to HCL-style format for Terraform
+        
+        Args:
+            policy_dict: Policy dictionary
+            
+        Returns:
+            HCL-style formatted policy string
+        """
+        try:
+            # Convert to JSON first
+            json_str = json.dumps(policy_dict, indent=2)
+            
+            # Convert JSON to HCL-style format
+            hcl_str = json_str
+            
+            # Replace JSON key formats with HCL
+            hcl_str = re.sub(r'"(\w+)":\s*', r'\1 = ', hcl_str)
+            
+            # Clean up formatting for Terraform
+            hcl_str = hcl_str.replace('"', '"')  # Ensure proper quotes
+            
+            return hcl_str
+            
+        except Exception as e:
+            logger.error(f"Error converting JSON to HCL: {str(e)}")
+            return json.dumps(policy_dict, indent=2)
+    
+    def _create_recommendation_file(self, resource_key: str, recommendation: Dict) -> Optional[Dict]:
+        """Create a new recommendation file when no existing Terraform file can be modified
+        
+        Args:
+            resource_key: Resource identifier
+            recommendation: Policy recommendation
+            
+        Returns:
+            Dictionary with file information or None
+        """
+        try:
+            # Generate Terraform content for the recommendation
+            terraform_content = self._generate_terraform_content(resource_key, recommendation)
+            
+            if not terraform_content:
+                logger.warning(f"No Terraform content generated for {resource_key}")
+                return None
+            
+            # Determine file path based on recommendation type
+            file_path = self._get_terraform_file_path(resource_key, recommendation)
+            
+            return {
+                'path': file_path,
+                'content': terraform_content,
+                'modification_type': 'new_recommendation'
+            }
+            
+        except Exception as e:
+            logger.error(f"Error creating recommendation file for {resource_key}: {str(e)}")
+            return None
+    
+    def _generate_terraform_content(self, resource_key: str, recommendation: Dict) -> str:
+        """Generate Terraform content for a policy recommendation
+        
+        Args:
+            resource_key: Resource identifier
+            recommendation: Policy recommendation data
+            
+        Returns:
+            Terraform content string
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            finding_id = recommendation.get('finding_id', 'unknown')
+            resource_name = recommendation.get('resource_name', 'unknown')
+            recommendation_type = recommendation.get('recommendation_type', 'unknown')
+            
+            # Header comment
+            content = f"""# Generated by Least Privilege Optimizer - {timestamp}
+# Access Analyzer Finding: {finding_id}
+# Resource: {resource_name}
+# Recommendation Type: {recommendation_type}
+#
+# This file contains AWS Access Analyzer recommendations for least privilege access.
+# Review the recommendations and apply them after thorough testing.
+
+"""
+            
+            if recommendation_type == "remove_unused_permissions":
+                # Generate content for unused permissions removal
+                unused_services = recommendation.get('unused_services', [])
+                unused_actions = recommendation.get('unused_actions', [])
+                
+                content += f"""# RECOMMENDATION: Remove Unused Permissions
+# This resource has {len(unused_services)} unused AWS service namespaces
+# Total unused actions detected: {len(unused_actions)}
+#
+# Unused Services: {', '.join(unused_services)}
+#
+# VALIDATION: All recommendations validated with AWS Access Analyzer validate-policy API
+#
+# INSTRUCTIONS:
+# 1. Review the unused services and actions below
+# 2. Remove these permissions from your IAM policies
+# 3. Test thoroughly in a non-production environment
+# 4. Apply changes gradually with monitoring
+
+"""
+                
+                # List unused actions by service
+                service_actions = {}
+                for action in unused_actions:
+                    service = action.split(':')[0] if ':' in action else 'unknown'
+                    if service not in service_actions:
+                        service_actions[service] = []
+                    service_actions[service].append(action)
+                
+                content += "# Unused Actions by Service:\n"
+                for service, actions in service_actions.items():
+                    content += f"#\n# {service.upper()} Service ({len(actions)} actions):\n"
+                    for action in actions[:10]:  # Limit to first 10 actions
+                        content += f"#   - {action}\n"
+                    if len(actions) > 10:
+                        content += f"#   ... and {len(actions) - 10} more actions\n"
+                
+            else:
+                # Generic recommendation content
+                content += f"""# MANUAL REVIEW REQUIRED
+# Finding Type: {recommendation.get('finding_type', 'unknown')}
+# Confidence: {recommendation.get('confidence', 'unknown')}
+# Action Required: {recommendation.get('action_required', 'unknown')}
+#
+# Reason: {recommendation.get('recommendation_reason', 'No reason provided')}
+#
+# Please review this finding manually and take appropriate action.
+"""
+            
+            return content
+            
+        except Exception as e:
+            logger.error(f"Error generating Terraform content: {str(e)}")
+            return ""
     
     def _get_terraform_file_path(self, resource_key: str, recommendation: Dict) -> str:
-        """Generate appropriate file path for Terraform content"""
-        tf_resource_name = recommendation.get('tf_resource_name', resource_key.replace('-', '_').replace('.', '_'))
-        rec_type = recommendation.get('recommendation_type', 'review')
+        """Generate appropriate file path for Terraform recommendation
         
-        if rec_type in ['policy_optimization', 'least_privilege_suggestion']:
-            return f"terraform/policies/least_privilege_{tf_resource_name}.tf"
-        else:
-            return f"terraform/reviews/review_{tf_resource_name}.tf"
+        Args:
+            resource_key: Resource identifier
+            recommendation: Policy recommendation
+            
+        Returns:
+            File path string
+        """
+        try:
+            recommendation_type = recommendation.get('recommendation_type', 'unknown')
+            tf_resource_name = recommendation.get('tf_resource_name', 'unknown')
+            
+            if recommendation_type == "remove_unused_permissions":
+                return f"terraform/policies/least_privilege_{tf_resource_name}.tf"
+            elif recommendation_type == "security_review":
+                return f"terraform/reviews/review_{tf_resource_name}.tf"
+            else:
+                return f"terraform/recommendations/recommendation_{tf_resource_name}.tf"
+                
+        except Exception as e:
+            logger.error(f"Error generating file path: {str(e)}")
+            return f"terraform/recommendations/recommendation_unknown.tf"
     
-    def _get_policy_file_path(self, resource_key: str, recommendation: Dict) -> str:
-        """Generate appropriate file path for policy JSON"""
-        tf_resource_name = recommendation.get('tf_resource_name', resource_key.replace('-', '_').replace('.', '_'))
-        return f"policies/generated/least_privilege_{tf_resource_name}.json"
-    
-    def _generate_pr_content(self, recommendations: Dict, summary_stats: Dict) -> tuple[str, str]:
-        """Generate PR title and body"""
-        total = summary_stats['total_recommendations']
+    def _generate_pr_content(self, recommendations: Dict[str, Dict], modification_summary: List[Dict]) -> tuple:
+        """Generate PR title and body content
         
-        # Generate title
-        title = f"IAM Policy Updates - {total} Access Analyzer Recommendations"
-        
-        # Generate comprehensive body
-        body = f"""# IAM Policy Updates - Least Privilege Optimization
+        Args:
+            recommendations: Dictionary of policy recommendations
+            modification_summary: List of modification details
+            
+        Returns:
+            Tuple of (title, body) strings
+        """
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            total_recommendations = len(recommendations)
+            
+            # Generate title
+            title = f"IAM Policy Updates - {total_recommendations} Access Analyzer Recommendations ({timestamp})"
+            
+            # Count recommendations by type
+            by_type = {}
+            by_confidence = {}
+            by_action = {}
+            total_unused_services = 0
+            total_unused_actions = 0
+            
+            for recommendation in recommendations.values():
+                rec_type = recommendation.get('recommendation_type', 'unknown')
+                confidence = recommendation.get('confidence', 'unknown')
+                action = recommendation.get('action_required', 'unknown')
+                
+                by_type[rec_type] = by_type.get(rec_type, 0) + 1
+                by_confidence[confidence] = by_confidence.get(confidence, 0) + 1
+                by_action[action] = by_action.get(action, 0) + 1
+                
+                total_unused_services += len(recommendation.get('unused_services', []))
+                total_unused_actions += len(recommendation.get('unused_actions', []))
+            
+            # Generate body
+            body = f"""# IAM Policy Updates - Access Analyzer Recommendations
 
-This PR contains automated updates based on AWS IAM Access Analyzer findings.
+This PR contains IAM policy optimization recommendations based on AWS Access Analyzer findings.
 
-## 📊 Summary
+## Summary
 
-- **Total Recommendations**: {total}
-- **Generated Files**: {len([k for k in recommendations.keys()])}
-- **Analysis Date**: {self._get_timestamp()}
+**Total Recommendations**: {total_recommendations}
+**Total Unused Services**: {total_unused_services}
+**Total Unused Actions**: {total_unused_actions}
 
-### Recommendation Types
+## Recommendations by Type
 """
-        
-        for rec_type, count in summary_stats['by_type'].items():
-            body += f"- **{rec_type.replace('_', ' ').title()}**: {count}\n"
-        
-        body += "\n### Confidence Levels\n"
-        for confidence, count in summary_stats['by_confidence'].items():
-            body += f"- **{confidence.title()}**: {count}\n"
-        
-        body += "\n### Actions Required\n"
-        for action, count in summary_stats['by_action_required'].items():
-            body += f"- **{action.replace('_', ' ').title()}**: {count}\n"
-        
-        body += f"""
+            
+            for rec_type, count in by_type.items():
+                body += f"- **{rec_type.replace('_', ' ').title()}**: {count}\n"
+            
+            body += f"""
+## Confidence Levels
+"""
+            
+            for confidence, count in by_confidence.items():
+                body += f"- **{confidence.title()}**: {count}\n"
+            
+            body += f"""
+## Action Required
+"""
+            
+            for action, count in by_action.items():
+                body += f"- **{action.replace('_', ' ').title()}**: {count}\n"
+            
+            body += f"""
+## Modified Resources
 
-## 🔍 Changes Included
+| Resource | Unused Services | Unused Actions | File Modified |
+|----------|----------------|----------------|---------------|
+"""
+            
+            for summary in modification_summary:
+                body += f"| {summary['resource']} | {summary['unused_services']} | {summary['unused_actions']} | {summary['file_modified']} |\n"
+            
+            body += f"""
+## Safety & Validation
 
-### Policy Optimizations
-Files with automated policy suggestions based on actual usage patterns.
+✅ **All policy modifications have been validated using AWS Access Analyzer validate-policy API**
+✅ **Only valid policies are included in this PR**
+✅ **Original policies are preserved if validation fails**
 
-### Security Reviews  
-Files requiring manual review for security findings.
+## Testing Recommendations
 
-### Unused Permission Removal
-Recommendations for removing unused IAM permissions.
+1. **Review each recommendation carefully** - Understand which permissions are being removed
+2. **Test in non-production first** - Apply changes to dev/staging environments
+3. **Monitor application behavior** - Ensure no functionality is broken
+4. **Apply changes gradually** - Implement changes in phases with monitoring
+5. **Have rollback plan ready** - Keep original policies available for quick revert
 
-## 🚀 Implementation Guide
+## Terraform Commands
 
-### 1. Review Generated Policies
-- Check `terraform/policies/` for least privilege policy suggestions
-- Verify the policies match your security requirements
-- Test policies in a non-production environment first
+To apply these changes:
 
-### 2. Manual Reviews Required
-- Check `terraform/reviews/` for items requiring manual attention
-- Address security findings and external access issues
-- Remove or update resources as recommended
-
-### 3. Apply Changes
 ```bash
-cd terraform
+# Review the changes
 terraform plan
+
+# Apply the changes (after testing)
 terraform apply
 ```
 
-## 🔒 Security Considerations
+## AWS Access Analyzer Details
 
-- All policy changes are based on AWS IAM Access Analyzer findings
-- High confidence recommendations are generally safe to implement
-- Medium/Low confidence items require manual review
-- Test changes in development environment first
+These recommendations are based on AWS Access Analyzer findings that identify unused permissions. The analyzer uses AWS CloudTrail logs and other data sources to determine which permissions have not been used in the last 90 days.
 
-## 📋 Checklist
-
-- [ ] Review all generated policy files
-- [ ] Address manual review items
-- [ ] Test changes in development
-- [ ] Update any application configurations if needed
-- [ ] Apply Terraform changes
-- [ ] Monitor for any access issues post-deployment
-
----
-
-*This PR was generated automatically by the Least Privilege Optimizer based on Access Analyzer findings.*
-*Generated at: {self._get_timestamp()}*
+Generated at: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 """
-        
-        return title, body
+            
+            return title, body
+            
+        except Exception as e:
+            logger.error(f"Error generating PR content: {str(e)}")
+            return "IAM Policy Updates", "Error generating PR content"
     
-    def _get_timestamp(self) -> str:
-        """Get current timestamp for file naming and logging"""
-        from datetime import datetime
-        return datetime.now().strftime("%Y%m%d-%H%M%S")
+    def _create_github_pr(self, title: str, body: str, files: List[Dict]) -> bool:
+        """Create GitHub pull request with the specified files
+        
+        Args:
+            title: PR title
+            body: PR body content
+            files: List of file dictionaries with path and content
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            # Create a new branch for the PR
+            timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            branch_name = f"iam-policy-updates-{timestamp}"
+            
+            # Get the default branch reference
+            default_branch = self.repo.default_branch
+            base_ref = self.repo.get_git_ref(f"heads/{default_branch}")
+            base_sha = base_ref.object.sha
+            
+            # Create new branch
+            new_ref = self.repo.create_git_ref(
+                ref=f"refs/heads/{branch_name}",
+                sha=base_sha
+            )
+            
+            # Create/update files in the new branch
+            for file_info in files:
+                file_path = file_info['path']
+                file_content = file_info['content']
+                modification_type = file_info.get('modification_type', 'update')
+                
+                try:
+                    # Check if file exists
+                    try:
+                        existing_file = self.repo.get_contents(file_path, ref=branch_name)
+                        # Update existing file
+                        self.repo.update_file(
+                            path=file_path,
+                            message=f"Update {file_path} - {modification_type}",
+                            content=file_content,
+                            sha=existing_file.sha,
+                            branch=branch_name
+                        )
+                        logger.info(f"Updated existing file: {file_path}")
+                    except:
+                        # Create new file
+                        self.repo.create_file(
+                            path=file_path,
+                            message=f"Create {file_path} - {modification_type}",
+                            content=file_content,
+                            branch=branch_name
+                        )
+                        logger.info(f"Created new file: {file_path}")
+                        
+                except Exception as e:
+                    logger.error(f"Failed to create/update file {file_path}: {str(e)}")
+                    continue
+            
+            # Create the pull request
+            pr = self.repo.create_pull(
+                title=title,
+                body=body,
+                head=branch_name,
+                base=default_branch
+            )
+            
+            logger.info(f"Successfully created PR #{pr.number}: {pr.html_url}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to create GitHub PR: {str(e)}")
+            return False

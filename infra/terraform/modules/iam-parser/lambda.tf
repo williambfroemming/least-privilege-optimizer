@@ -66,7 +66,7 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
     variables = {
       S3_BUCKET    = aws_s3_bucket.iam_parser_output.bucket
       S3_PREFIX    = var.s3_prefix
-      LOG_LEVEL    = var.environment == "prod" ? "WARNING" : "INFO"
+      LOG_LEVEL    = var.environment == "prod" ? "WARNING" : "DEBUG"
       ENVIRONMENT  = var.environment
       ANALYZER_ARN = var.analyzer_arn
       GITHUB_REPO  = var.github_repo
