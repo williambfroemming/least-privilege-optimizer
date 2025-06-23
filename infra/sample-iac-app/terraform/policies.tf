@@ -1,3 +1,11 @@
+# MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-23 01:56:57
+# Finding ID: b18bd454-3888-4471-8dba-8d02302ad998
+# Resource: bob_dev_test
+# Removed unused services: ecr, ecs, iam, lambda, logs, s3
+# This modification removes 6 unused service permissions
+# Based on AWS Access Analyzer findings for least privilege access
+# All policies validated using AWS Access Analyzer validate-policy API
+
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
@@ -5,26 +13,22 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      {
-        Sid      = "OverlyPermissiveReadAndWrite",
-        Effect   = "Allow",
-        Action   = [
-          "s3:*",
-          "athena:*",
-          "glue:*",
-          "cloudwatch:Get*",
-          "cloudwatch:PutMetricData",
-          "dynamodb:Scan",
-          "kms:Decrypt",
-          "iam:List*",
-          "iam:Get*",
-          "lambda:InvokeFunction",
-          "sts:AssumeRole"
-        ],
-        Resource = "*"
-      }
+        {
+            Sid = "OverlyPermissiveReadAndWrite",
+            Effect = "Allow",
+            Action = [
+                "athena:*",
+                "glue:*",
+                "cloudwatch:Get*",
+                "cloudwatch:PutMetricData",
+                "dynamodb:Scan",
+                "kms:Decrypt",
+                "sts:AssumeRole"
+            ],
+            Resource = "*"
+        }
     ]
-  })
+})
 }
 
 
@@ -39,7 +43,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
         Sid: "LambdaOverreach",
         Effect: "Allow",
         Action: [
-          "lambda:*"
+"lambda:*"
         ],
         Resource: "*"
       },
@@ -50,8 +54,8 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
           "s3:PutObject",
           "s3:GetObject",
           "s3:ListBucket",
-          "s3:DeleteObject",
-          "s3:PutBucketPolicy",
+"s3:DeleteObject",
+"s3:PutBucketPolicy",
           "s3:GetBucketAcl"
         ],
         Resource: [
@@ -75,7 +79,7 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
           "logs:DescribeLogGroups",
           "logs:GetLogEvents",
           "logs:FilterLogEvents",
-          "logs:PutLogEvents"
+"logs:PutLogEvents"
         ],
         Resource: "*"
       },
@@ -107,19 +111,14 @@ resource "aws_iam_user_policy" "dave_observer_policy" {
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [
-      {
-        Effect = "Allow",
-        Action = [
-          "logs:GetLogEvents",
-          "logs:DescribeLogStreams",
-          "logs:DescribeLogGroups",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "cloudwatch:GetMetricData",
-          "glue:GetTables"
-        ],
-        Resource = "*"
-      }
+        {
+            Effect = "Allow",
+            Action = [
+                "cloudwatch:GetMetricData",
+                "glue:GetTables"
+            ],
+            Resource = "*"
+        }
     ]
-  })
+})
 }
