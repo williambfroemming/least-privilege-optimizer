@@ -1,28 +1,25 @@
+# MODIFIED BY LEAST PRIVILEGE OPTIMIZER - 2025-06-26 00:59:50 UTC
+# Based on AWS IAM Access Analyzer findings
+# All permissions were found to be unused and have been removed for least privilege
+
+
+# RECOMMENDATION SUMMARY for aws_iam_user.alice_analyst_test:
+# - Finding ID: 65fffdff-cf21-44c0-b6a9-8b6692f0a913
+# - Unused actions: 21
+# - All permissions removed as they were unused
+# - Policy now has empty statements array (grants no permissions)
+
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
 
+  # LEAST PRIVILEGE POLICY: All previous permissions were unused according to Access Analyzer
+  # This policy grants no permissions - only add what is actually needed based on real usage
   policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Sid      = "OverlyPermissiveReadAndWrite",
-        Effect   = "Allow",
-        Action   = [
-          "s3:*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
-          "cloudwatch:Get*",              # OK
-          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
-          "dynamodb:Scan",                # Too broad for sensitive data
-          "kms:Decrypt",                  # Dangerous without restrictions
-          "iam:List*",                    # Allows recon
-          "iam:Get*",                     # More recon
-          "lambda:InvokeFunction",        # Could be misused
-          "sts:AssumeRole"                # Very risky unless scoped tightly
-        ],
-        Resource = "*"
-      }
+    Version = "2012-10-17"
+    Statement = []
+  })
+}
     ]
   })
 }
