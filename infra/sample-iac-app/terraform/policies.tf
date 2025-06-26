@@ -1,32 +1,32 @@
-# MODIFIED BY IAM ANALYZER - 2025-06-25 20:14:49
-# Removed unused permissions based on Access Analyzer findings
+# MODIFIED BY IAM ANALYZER - 2025-06-25 21:14:16
+# File: infra/sample-iac-app/terraform/policies.tf
+# Updated 3 policies, removed 20 unused permissions
 
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
 
-  # OPTIMIZED POLICY - Removed 10 unused permissions
-  # Original policy had: s3:*, athena:*, glue:*, dynamodb:Scan, iam:List*, iam:Get*, lambda:InvokeFunction, sts:AssumeRole
-  # Now only includes actually used permissions
   policy = jsonencode({
-    Version = "2012-10-17"
+    Version = "2012-10-17",
     Statement = [
       {
-        Sid    = "MinimalRequiredAccess"
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket",
-          "athena:StartQueryExecution", 
-          "athena:GetQueryResults",
-          "cloudwatch:PutMetricData",
-          "kms:Decrypt"
-        ]
+        Sid      = "OverlyPermissiveReadAndWrite",
+        Effect   = "Allow",
+        Action   = [
+          "s3:*",                         # Full S3 access
+          "athena:*",                     # All Athena actions
+          "glue:*",                       # All Glue actions (overkill for most analysts)
+          "cloudwatch:Get*",              # OK
+          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
+          "dynamodb:Scan",                # Too broad for sensitive data
+          "kms:Decrypt",                  # Dangerous without restrictions
+          "iam:List*",                    # Allows recon
+          "iam:Get*",                     # More recon
+          "lambda:InvokeFunction",        # Could be misused
+          "sts:AssumeRole"                # Very risky unless scoped tightly
+        ],
         Resource = "*"
       }
-    ]
-  })
-}
     ]
   })
 }
