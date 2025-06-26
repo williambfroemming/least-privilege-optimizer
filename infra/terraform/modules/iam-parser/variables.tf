@@ -1,3 +1,14 @@
+variable "aws_region" {
+  description = "AWS region for deployment"
+  type        = string
+  default     = null
+  
+  validation {
+    condition = var.aws_region == null || can(regex("^[a-z]{2}-[a-z]+-[0-9]$", var.aws_region))
+    error_message = "AWS region must be in format like 'us-east-1'."
+  }
+}
+
 # Core functionality variables
 variable "tf_path" {
   description = "Path to the Terraform project to be analyzed"
@@ -156,7 +167,7 @@ variable "create_lambda" {
 variable "force_lambda_rebuild" {
   description = "Force Lambda function rebuild (useful for development)"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "github_repo" {
@@ -170,4 +181,33 @@ variable "analyzer_arn" {
   description = "ARN of the AWS Access Analyzer to use for policy analysis"
   type        = string
   default     = "arn:aws:access-analyzer:us-east-1:904610147891:analyzer/UnusedAccess-ConsoleAnalyzer-5449bfec-fbc1-4920-9e88-94b89b0044b8"
+}
+
+# Add this to variables.tf
+variable "github_token_ssm_path" {
+  description = "SSM Parameter Store path containing GitHub token"
+  type        = string
+  default     = "/github-tokens/iam-analyzer"
+  
+  validation {
+    condition     = can(regex("^/[a-zA-Z0-9/_-]+$", var.github_token_ssm_path))
+    error_message = "SSM path must start with / and contain valid characters."
+  }
+}
+
+variable "schedule_expression" {
+  description = "EventBridge schedule expression for automated runs"
+  type        = string
+  default     = "rate(7 days)"  # Weekly by default
+  
+  validation {
+    condition     = can(regex("^(rate\\(.*\\)|cron\\(.*\\))$", var.schedule_expression))
+    error_message = "Schedule expression must be valid EventBridge format."
+  }
+}
+
+variable "enable_test_mode" {
+  description = "Enable test mode (uses mock data instead of real Access Analyzer)"
+  type        = bool
+  default     = false
 }

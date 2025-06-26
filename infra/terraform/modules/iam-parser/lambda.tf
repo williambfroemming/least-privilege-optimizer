@@ -8,10 +8,11 @@ resource "null_resource" "lambda_build" {
   }
   
   triggers = {
-    # Use more stable triggers instead of timestamp
-    build_script_hash = fileexists("${path.module}/lambda/build_lambda.sh") ? filebase64sha256("${path.module}/lambda/build_lambda.sh") : ""
-    # Only rebuild when you explicitly want to
-    force_rebuild = var.force_lambda_rebuild ? timestamp() : "stable"
+    # More specific triggers
+    build_script     = fileexists("${path.module}/lambda/build_lambda.sh") ? filebase64sha256("${path.module}/lambda/build_lambda.sh") : ""
+    lambda_source    = fileexists("${path.module}/lambda/index.py") ? filebase64sha256("${path.module}/lambda/index.py") : ""
+    requirements     = fileexists("${path.module}/lambda/requirements.txt") ? filebase64sha256("${path.module}/lambda/requirements.txt") : ""
+    force_rebuild    = var.force_lambda_rebuild ? timestamp() : "stable"
   }
 }
 
@@ -62,16 +63,18 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   # Use the layer for dependencies
   layers = var.create_lambda && length(aws_lambda_layer_version.dependencies) > 0 ? [aws_lambda_layer_version.dependencies[0].arn] : []
 
-  environment {
-    variables = {
-      S3_BUCKET    = aws_s3_bucket.iam_parser_output.bucket
-      S3_PREFIX    = var.s3_prefix
-      LOG_LEVEL    = var.environment == "prod" ? "WARNING" : "DEBUG"
-      ENVIRONMENT  = var.environment
-      ANALYZER_ARN = var.analyzer_arn
-      GITHUB_REPO  = var.github_repo
-    }
+ environment {
+  variables = {
+    S3_BUCKET                  = aws_s3_bucket.iam_parser_output.bucket
+    S3_PREFIX                  = var.s3_prefix
+    LOG_LEVEL                  = var.environment == "prod" ? "WARNING" : "DEBUG"
+    ENVIRONMENT                = var.environment
+    ANALYZER_ARN               = var.analyzer_arn
+    GITHUB_REPO                = var.github_repo
+    IAM_ANALYZER_TEST_MODE     = var.enable_test_mode ? "true" : "false"
+    GITHUB_TOKEN_SSM_PATH      = var.github_token_ssm_path  # Add this line
   }
+}
 
   tags = local.common_tags
 
@@ -83,7 +86,6 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   
   lifecycle {
     ignore_changes = [
-      last_modified,
       source_code_hash
     ]
     replace_triggered_by = [

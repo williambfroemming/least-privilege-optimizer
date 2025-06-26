@@ -51,8 +51,6 @@ resource "null_resource" "run_iam_parser" {
     tf_path_dir   = var.tf_path
     bucket_name   = aws_s3_bucket.iam_parser_output.bucket
     s3_prefix     = var.s3_prefix
-    # Add a timestamp to force re-execution when needed
-    timestamp     = timestamp()
   }
 
   depends_on = [

@@ -101,7 +101,8 @@ resource "aws_iam_policy" "access_analyzer_permissions" {
           "access-analyzer:CheckNoNewAccess",
           "access-analyzer:ListFindings",
           "access-analyzer:ListFindingsV2",
-          "access-analyzer:GetFinding"
+          "access-analyzer:GetFinding",
+          "access-analyzer:GetFindingV2"
         ],
         Resource = "*"
       }
@@ -125,10 +126,10 @@ resource "aws_iam_policy" "lambda_kms_access" {
           "kms:Decrypt",
           "kms:GenerateDataKey"
         ],
-        Resource = "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/*",
+        Resource = aws_kms_key.iam_analyzer_key.arn,
         Condition = {
           StringEquals = {
-            "kms:via" = "s3.${data.aws_region.current.name}.amazonaws.com"
+            "kms:ViaService" = "s3.${data.aws_region.current.name}.amazonaws.com"
           }
         }
       }
@@ -138,7 +139,7 @@ resource "aws_iam_policy" "lambda_kms_access" {
   tags = local.common_tags
 }
 
-# SSM permissions for GitHub token access
+# UPDATED: SSM permissions for GitHub token access with configurable path
 resource "aws_iam_policy" "lambda_ssm_access" {
   count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-ssm-access-policy"
@@ -152,7 +153,7 @@ resource "aws_iam_policy" "lambda_ssm_access" {
         Action = [
           "ssm:GetParameter"
         ],
-        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter/github-token"
+        Resource = "arn:aws:ssm:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:parameter${var.github_token_ssm_path}"
       }
     ]
   })
