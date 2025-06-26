@@ -135,14 +135,12 @@ if __name__ == "__main__":
                 Key=key_versioned, 
                 Body=json_data, 
                 ContentType="application/json",
-                ServerSideEncryption='AES256'
             )
             s3.put_object(
                 Bucket=s3_bucket, 
                 Key=key_latest, 
                 Body=json_data, 
                 ContentType="application/json",
-                ServerSideEncryption='AES256'
             )
             
             logger.info(f"Successfully uploaded to s3://{s3_bucket}/{key_versioned}")

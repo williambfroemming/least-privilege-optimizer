@@ -52,7 +52,8 @@ resource "aws_s3_bucket_lifecycle_configuration" "access_logs_lifecycle" {
 # S3 bucket for IAM analyzer outputs
 resource "aws_s3_bucket" "iam_parser_output" {
   bucket = "${local.name_prefix}-bucket-${random_id.bucket_suffix.hex}"
-
+  force_destroy = var.force_destroy_bucket  # Add this line
+  
   tags = merge(var.tags, {
     Purpose     = "IAM least privilege scan outputs"
     Environment = var.environment

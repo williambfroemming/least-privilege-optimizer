@@ -1,240 +1,582 @@
-from typing import Dict, List, Optional
+"""
+AWS IAM Access Analyzer Wrapper Module
+
+This module provides a clean, type-safe interface for AWS IAM Access Analyzer operations
+including resource analysis, finding management, and policy operations.
+"""
+
+from typing import Dict, List, Optional, Union, Any, Tuple
+from dataclasses import dataclass
+from enum import Enum
 import json
-from aws_lambda_powertools import Logger
-from aws_lambda_powertools.utilities.typing import LambdaContext
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, BotoCoreError
+from aws_lambda_powertools import Logger
 
-logger = Logger(service="Analyzer")
+logger = Logger(service="IAMAnalyzer")
 
-class Analyzer:
-    """Wrapper class for AWS IAM Access Analyzer operations"""
+
+class ResourceType(Enum):
+    """Supported IAM resource types for analysis"""
+    USER = "AWS::IAM::User"
+    ROLE = "AWS::IAM::Role"
+    GROUP = "AWS::IAM::Group"
+    POLICY = "AWS::IAM::Policy"
+
+
+class FindingStatus(Enum):
+    """Access Analyzer finding statuses"""
+    ACTIVE = "ACTIVE"
+    ARCHIVED = "ARCHIVED"
+    RESOLVED = "RESOLVED"
+
+
+@dataclass
+class IAMResource:
+    """Represents an IAM resource to be analyzed"""
+    arn: str
+    resource_type: ResourceType
+    name: str
+    tf_resource_name: str = None
     
-    def __init__(self, region: str = "us-east-1"):
-        """Initialize Access Analyzer client
-        
-        Args:
-            region: AWS region name
-        """
-        self.client = boto3.client('accessanalyzer', region_name=region)
-        self.s3 = boto3.client('s3', region_name=region)
+    def __post_init__(self):
+        """Validate resource data after initialization"""
+        if not self.arn or not self.name:
+            raise ValueError("Resource ARN and name are required")
+        if not self.tf_resource_name:
+            self.tf_resource_name = self.name.replace('-', '_')
+
+
+@dataclass  
+class FindingSummary:
+    """Summary statistics for findings analysis"""
+    total_findings: int
+    findings_by_type: Dict[str, int]
+    findings_by_status: Dict[str, int]
+    findings_by_resource: Dict[str, int]
+
+
+class AnalyzerError(Exception):
+    """Custom exception for Analyzer operations"""
+    pass
+
+
+class IAMAnalyzer:
+    """
+    AWS IAM Access Analyzer client wrapper providing type-safe operations
+    for IAM resource analysis, finding management, and policy operations.
+    """
     
-    def fetch_resources_to_analyze(self, bucket_name: str) -> List[Dict]:
-        """Fetch IAM resources to analyze from S3
-        
-        Args:
-            bucket_name: Name of the S3 bucket containing the resources file
-            
-        Returns:
-            List of IAM resources to analyze with their ARNs
+    def __init__(self, region: str = 'us-east-1') -> None:
         """
+        Initialize the IAM Analyzer with AWS clients
+        """
+        self.region = region
+        self._initialize_clients()
+        
+    def _initialize_clients(self) -> None:
+        """Initialize AWS service clients with error handling"""
         try:
-            response = self.s3.get_object(
-                Bucket=bucket_name,
-                Key='iam-parsed/latest.json'
-            )
-            raw_resources = json.loads(response['Body'].read().decode('utf-8'))
+            logger.info(f"Initializing AWS clients for region: {self.region}")
+            self.access_analyzer = boto3.client('accessanalyzer', region_name=self.region)
+            self.s3_client = boto3.client('s3', region_name=self.region)
+            logger.info("Successfully initialized AWS clients")
+        except Exception as e:
+            error_msg = f"Failed to initialize AWS clients: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+
+    # =============================================================================
+    # Resource Management Operations
+    # =============================================================================
+    
+    def fetch_resources_from_s3(self, bucket_name: str, prefix: str) -> List[IAMResource]:
+        """
+        Fetch IAM resources from S3 and convert to typed objects
+        """
+        self._validate_s3_params(bucket_name, prefix)
+        
+        try:
+            logger.info(f"Fetching resources from s3://{bucket_name}/{prefix}")
+            raw_data = self._fetch_s3_object(bucket_name, prefix)
+            resources = self._parse_resource_data(raw_data)
             
-            # Extract resources and their ARNs from the new format
-            resources = []
+            logger.info(f"Successfully parsed {len(resources)} IAM resources")
+            self._log_resource_summary(resources)
             
-            # Process users
-            for user in raw_resources.get('aws_iam_user', []):
-                resources.append({
-                    'ResourceARN': user['arn'],
-                    'ResourceType': 'AWS::IAM::User',
-                    'ResourceName': user['name']
-                })
-                
-            # Process roles
-            for role in raw_resources.get('aws_iam_role', []):
-                resources.append({
-                    'ResourceARN': role['arn'],
-                    'ResourceType': 'AWS::IAM::Role',
-                    'ResourceName': role['name']
-                })
-                
-            # Process groups if they exist
-            for group in raw_resources.get('aws_iam_group', []):
-                if 'arn' in group:  # Only add if ARN exists
-                    resources.append({
-                        'ResourceARN': group['arn'],
-                        'ResourceType': 'AWS::IAM::Group',
-                        'ResourceName': group['name']
-                    })
-                    
-            # Process standalone policies if they exist
-            for policy in raw_resources.get('aws_iam_policy', []):
-                if 'arn' in policy:  # Only add if ARN exists
-                    resources.append({
-                        'ResourceARN': policy['arn'],
-                        'ResourceType': 'AWS::IAM::Policy',
-                        'ResourceName': policy['name']
-                    })
-            
-            logger.info(f"Successfully fetched {len(resources)} resources to analyze")
             return resources
             
-        except ClientError as e:
-            logger.error(f"Error fetching resources from S3: {str(e)}")
-            raise
-
-        
-    def list_findings(self, analyzer_arn: str, bucket_name: Optional[str] = None) -> List[dict]:
-        """List findings from IAM Access Analyzer for specific resources
-        
-        Args:
-            analyzer_arn: ARN of the analyzer to list findings from
-            bucket_name: Optional name of S3 bucket containing resources to analyze
-            
-        Returns:
-            List of findings filtered by resources
-        """
-        try:
-            # If bucket name is provided, fetch resources to analyze
-            resource_arns = []
-            if bucket_name:
-                resources = self.fetch_resources_to_analyze(bucket_name)
-                resource_arns = [resource['ResourceARN'] for resource in resources]
-                logger.info(f"Analyzing {len(resource_arns)} resources from S3")
-            
-            # Get all findings
-            response = self.client.list_findings_v2(
-                analyzerArn=analyzer_arn,
-                filter={
-                    'findingType': {
-                        'contains': ['UNUSED_ACCESS']
-                    }
-                }
-            )
-            findings = response.get('findings', [])
-            
-            # If we have specific resources to analyze, filter findings
-            if resource_arns:
-                findings = [
-                    finding for finding in findings 
-                    if finding.get('resource', {}).get('arn') in resource_arns
-                ]
-                logger.info(f"Found {len(findings)} findings for specified resources")
-            else:
-                logger.info(f"Found {len(findings)} total findings")
-                
-            return findings
-            
         except Exception as e:
-            logger.error(f"Error listing findings: {str(e)}")
+            error_msg = f"Failed to fetch resources from S3: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+    
+    def _validate_s3_params(self, bucket_name: str, prefix: str) -> None:
+        """Validate S3 parameters"""
+        if not bucket_name or not prefix:
+            raise ValueError("Both bucket_name and prefix are required")
+    
+    def _fetch_s3_object(self, bucket_name: str, prefix: str) -> Dict[str, Any]:
+        """Fetch and parse JSON from S3"""
+        s3_key = f"{prefix.rstrip('/')}/latest.json"
+        logger.info(f"Fetching S3 object: {s3_key}")
+        
+        try:
+            response = self.s3_client.get_object(Bucket=bucket_name, Key=s3_key)
+            content_size = response.get('ContentLength', 0)
+            logger.info(f"Retrieved S3 object ({content_size} bytes)")
+            
+            raw_data = json.loads(response['Body'].read().decode('utf-8'))
+            return raw_data.get("resources", {})
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            logger.error(f"S3 ClientError [{error_code}]: {str(e)}")
+            raise
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in S3 object: {str(e)}")
             raise
     
-    def generate_policy(self, policy_type: str, configuration: Dict) -> Dict:
-        """Generate IAM policy using Access Analyzer
+    def _parse_resource_data(self, raw_data: Dict[str, Any]) -> List[IAMResource]:
+        """Parse raw S3 data into typed IAM resources - updated for your data structure"""
+        resources: List[IAMResource] = []
         
-        Args:
-            policy_type: Type of policy to generate
-            configuration: Policy generation configuration
+        # Resource type mapping for your S3 structure
+        resource_mappings = {
+            'aws_iam_user': ResourceType.USER,
+            'aws_iam_role': ResourceType.ROLE,
+            'aws_iam_group': ResourceType.GROUP,
+            'aws_iam_policy': ResourceType.POLICY
+        }
+        
+        logger.info(f"Processing resource categories: {list(raw_data.keys())}")
+        
+        for category, resource_type in resource_mappings.items():
+            raw_resources = raw_data.get(category, [])
+            if not raw_resources:
+                logger.info(f"No {category} resources found")
+                continue
+                
+            parsed_count = self._process_resource_category(
+                raw_resources, resource_type, resources
+            )
+            logger.info(f"Processed {parsed_count}/{len(raw_resources)} {category} resources")
+        
+        return resources
+    
+    def _process_resource_category(
+        self, 
+        raw_resources: List[Dict[str, Any]], 
+        resource_type: ResourceType,
+        resources: List[IAMResource]
+    ) -> int:
+        """Process a single category of resources - updated for your data structure"""
+        processed_count = 0
+        
+        for raw_resource in raw_resources:
+            try:
+                if self._is_valid_resource(raw_resource):
+                    resource = IAMResource(
+                        arn=raw_resource['arn'],
+                        resource_type=resource_type,
+                        name=raw_resource['name'],
+                        tf_resource_name=raw_resource.get('tf_resource_name', raw_resource['name'].replace('-', '_'))
+                    )
+                    resources.append(resource)
+                    processed_count += 1
+                    logger.debug(f"Added {resource_type.value}: {resource.name} (tf: {resource.tf_resource_name})")
+                else:
+                    logger.warning(f"Skipping invalid {resource_type.value}: {raw_resource}")
+                    
+            except (KeyError, ValueError) as e:
+                logger.warning(f"Failed to process {resource_type.value}: {str(e)}")
+                continue
+        
+        return processed_count
+    
+    def _is_valid_resource(self, resource: Dict[str, Any]) -> bool:
+        """Check if a resource has required fields"""
+        return bool(resource.get('arn') and resource.get('name'))
+    
+    def _log_resource_summary(self, resources: List[IAMResource]) -> None:
+        """Log summary of processed resources"""
+        summary = {}
+        for resource in resources:
+            resource_type = resource.resource_type.value
+            summary[resource_type] = summary.get(resource_type, 0) + 1
+        
+        logger.info(f"Resource summary: {summary}")
+        
+        if logger.level == "DEBUG":
+            logger.debug("Complete resource listing:")
+            for i, resource in enumerate(resources, 1):
+                logger.debug(f"  {i}. {resource.resource_type.value}: {resource.name} ({resource.arn})")
+
+    # =============================================================================
+    # Findings Operations
+    # =============================================================================
+    
+    def list_findings_for_resources(
+        self, 
+        analyzer_arn: str, 
+        resources: List[IAMResource]
+    ) -> Tuple[List[Dict[str, Any]], FindingSummary]:
+        """
+        Get all findings for specific IAM resources
+        """
+        if not analyzer_arn or not resources:
+            raise ValueError("analyzer_arn and resources are required")
+        
+        try:
+            logger.info(f"Fetching findings for {len(resources)} resources")
+            resource_arns = [resource.arn for resource in resources]
             
-        Returns:
-            Generated policy document
+            findings = self._fetch_findings_by_resources(analyzer_arn, resource_arns)
+            summary = self._create_finding_summary(findings)
+            
+            logger.info(f"Retrieved {len(findings)} findings")
+            self._log_finding_details(findings, summary)
+            
+            return findings, summary
+            
+        except Exception as e:
+            error_msg = f"Failed to list findings: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+    
+    def _fetch_findings_by_resources(
+        self, 
+        analyzer_arn: str, 
+        resource_arns: List[str]
+    ) -> List[Dict[str, Any]]:
+        """Fetch findings filtered by specific resource ARNs"""
+        
+        # Try to fetch findings for each resource individually to handle API limitations
+        all_findings = []
+        
+        # First, try to get all findings without filter
+        try:
+            logger.info("Fetching all findings from Access Analyzer")
+            response = self.access_analyzer.list_findings_v2(analyzerArn=analyzer_arn)
+            all_analyzer_findings = response.get('findings', [])
+            logger.info(f"Retrieved {len(all_analyzer_findings)} total findings from analyzer")
+            
+            # Filter findings to only include our target resources
+            filtered_findings = []
+            for finding in all_analyzer_findings:
+                resource_arn = self._extract_resource_arn(finding)
+                if resource_arn in resource_arns:
+                    filtered_findings.append(finding)
+                    logger.debug(f"Including finding {finding.get('id')} for resource {resource_arn}")
+            
+            logger.info(f"Filtered to {len(filtered_findings)} findings for target resources")
+            return filtered_findings
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            logger.error(f"AccessAnalyzer ClientError [{error_code}]: {str(e)}")
+            raise
+    
+    def _create_finding_summary(self, findings: List[Dict[str, Any]]) -> FindingSummary:
+        """Create statistical summary of findings"""
+        findings_by_type: Dict[str, int] = {}
+        findings_by_status: Dict[str, int] = {}
+        findings_by_resource: Dict[str, int] = {}
+        
+        for finding in findings:
+            # Count by type
+            finding_type = finding.get('findingType', 'unknown')
+            findings_by_type[finding_type] = findings_by_type.get(finding_type, 0) + 1
+            
+            # Count by status
+            status = finding.get('status', 'unknown')
+            findings_by_status[status] = findings_by_status.get(status, 0) + 1
+            
+            # Count by resource
+            resource_arn = self._extract_resource_arn(finding)
+            findings_by_resource[resource_arn] = findings_by_resource.get(resource_arn, 0) + 1
+        
+        return FindingSummary(
+            total_findings=len(findings),
+            findings_by_type=findings_by_type,
+            findings_by_status=findings_by_status,
+            findings_by_resource=findings_by_resource
+        )
+    
+    def _extract_resource_arn(self, finding: Dict[str, Any]) -> str:
+        """
+        Safely extract resource ARN from finding
         """
         try:
-            response = self.client.start_policy_generation(
+            resource = finding.get('resource')
+            
+            if resource is None:
+                logger.debug(f"Finding {finding.get('id', 'unknown')} has no resource field")
+                return 'unknown'
+            
+            # Handle case where resource is a dictionary (expected)
+            if isinstance(resource, dict):
+                return resource.get('arn', 'unknown')
+            
+            # Handle case where resource is a string (the ARN itself)
+            elif isinstance(resource, str):
+                logger.debug(f"Finding {finding.get('id', 'unknown')} has resource as string: {resource}")
+                return resource
+            
+            # Handle unexpected resource type
+            else:
+                logger.warning(f"Finding {finding.get('id', 'unknown')} has unexpected resource type: {type(resource)}")
+                return 'unknown'
+                
+        except Exception as e:
+            logger.warning(f"Error extracting resource ARN from finding {finding.get('id', 'unknown')}: {str(e)}")
+            return 'unknown'
+    
+    def _log_finding_details(self, findings: List[Dict[str, Any]], summary: FindingSummary) -> None:
+        """Log detailed information about findings"""
+        logger.info(f"Finding types: {summary.findings_by_type}")
+        logger.info(f"Finding statuses: {summary.findings_by_status}")
+        logger.info(f"Findings per resource: {summary.findings_by_resource}")
+        
+        if findings and logger.level == "INFO":
+            logger.info("Finding details:")
+            for i, finding in enumerate(findings, 1):
+                resource_arn = self._extract_resource_arn(finding)
+                finding_id = finding.get('id', 'unknown')
+                finding_type = finding.get('findingType', 'unknown')
+                status = finding.get('status', 'unknown')
+                logger.info(f"  {i}. {finding_id} | {finding_type} | {status} | {resource_arn}")
+    
+    def get_finding_details(self, analyzer_arn: str, finding_id: str) -> Dict[str, Any]:
+        """
+        Get detailed information about a specific finding
+        """
+        if not analyzer_arn or not finding_id:
+            raise ValueError("analyzer_arn and finding_id are required")
+        
+        try:
+            logger.info(f"Retrieving finding details: {finding_id}")
+            
+            response = self.access_analyzer.get_finding(
+                analyzerArn=analyzer_arn,
+                id=finding_id
+            )
+            
+            finding = response['finding']
+            self._log_finding_summary(finding)
+            
+            return finding
+            
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_msg = f"Failed to get finding [{error_code}]: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+    
+    def _log_finding_summary(self, finding: Dict[str, Any]) -> None:
+        """Log key information about a finding"""
+        resource_arn = self._extract_resource_arn(finding)
+        finding_type = finding.get('findingType', 'unknown')
+        status = finding.get('status', 'unknown')
+        created_at = finding.get('createdAt', 'unknown')
+        
+        logger.info(f"Finding summary: {finding_type} | {status} | {resource_arn} | {created_at}")
+    
+    def update_finding_status(
+        self, 
+        analyzer_arn: str, 
+        finding_ids: List[str], 
+        status: Union[FindingStatus, str]
+    ) -> None:
+        """
+        Update the status of multiple findings
+        """
+        if not analyzer_arn or not finding_ids:
+            raise ValueError("analyzer_arn and finding_ids are required")
+        
+        # Handle both enum and string status
+        status_str = status.value if isinstance(status, FindingStatus) else str(status)
+        
+        try:
+            logger.info(f"Updating {len(finding_ids)} findings to status: {status_str}")
+            
+            self.access_analyzer.update_findings(
+                analyzerArn=analyzer_arn,
+                ids=finding_ids,
+                status=status_str
+            )
+            
+            logger.info(f"Successfully updated findings to {status_str}")
+            for finding_id in finding_ids:
+                logger.debug(f"Updated finding {finding_id} to {status_str}")
+                
+        except ClientError as e:
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_msg = f"Failed to update findings [{error_code}]: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+
+    # =============================================================================
+    # Policy Operations
+    # =============================================================================
+    
+    def generate_policy(self, policy_type: str, configuration: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Generate IAM policy using Access Analyzer
+        """
+        if not policy_type or not configuration:
+            raise ValueError("policy_type and configuration are required")
+        
+        try:
+            logger.info(f"Starting policy generation: {policy_type}")
+            logger.debug(f"Configuration: {json.dumps(configuration, indent=2)}")
+            
+            # Start policy generation job
+            response = self.access_analyzer.start_policy_generation(
                 policyType=policy_type,
                 policyGenerationDetails=configuration
             )
             
             job_id = response['jobId']
-            logger.info(f"Started policy generation job {job_id}")
+            logger.info(f"Policy generation job started: {job_id}")
             
-            waiter = self.client.get_waiter('policy_generation_complete')
-            waiter.wait(jobId=job_id)
+            # Wait for completion
+            self._wait_for_policy_generation(job_id)
             
-            policy = self.client.get_generated_policy(jobId=job_id)
-            logger.info(f"Generated policy for job {job_id}")
-            return policy['generatedPolicy']
+            # Retrieve generated policy
+            policy = self._get_generated_policy(job_id)
             
-        except ClientError as e:
-            logger.error(f"Error generating policy: {str(e)}")
-            raise
+            logger.info(f"Policy generation completed for job: {job_id}")
+            return policy
             
-    def validate_policy(self, policy_document: str, policy_type: str = 'IAM') -> Dict:
-        """Validate IAM policy using Access Analyzer
-        
-        Args:
-            policy_document: Policy document to validate
-            policy_type: Type of policy to validate
-            
-        Returns:
-            Validation findings
+        except Exception as e:
+            error_msg = f"Policy generation failed: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+    
+    def _wait_for_policy_generation(self, job_id: str) -> None:
+        """Wait for policy generation to complete"""
+        logger.info(f"Waiting for policy generation completion: {job_id}")
+        waiter = self.access_analyzer.get_waiter('policy_generation_complete')
+        waiter.wait(jobId=job_id)
+        logger.info(f"Policy generation completed: {job_id}")
+    
+    def _get_generated_policy(self, job_id: str) -> Dict[str, Any]:
+        """Retrieve generated policy from completed job"""
+        response = self.access_analyzer.get_generated_policy(jobId=job_id)
+        policy = response['generatedPolicy']
+        logger.debug(f"Generated policy: {json.dumps(policy, indent=2)}")
+        return policy
+    
+    def validate_policy(self, policy_document: str, policy_type: str = 'IAM') -> List[Dict[str, Any]]:
         """
+        Validate IAM policy document
+        """
+        if not policy_document:
+            raise ValueError("policy_document is required")
+        
         try:
-            response = self.client.validate_policy(
+            logger.info(f"Validating {policy_type} policy")
+            logger.debug(f"Policy preview: {policy_document[:200]}...")
+            
+            response = self.access_analyzer.validate_policy(
                 policyDocument=policy_document,
                 policyType=policy_type
             )
             
             findings = response.get('findings', [])
-            logger.info(f"Found {len(findings)} validation findings")
+            self._log_validation_results(findings)
+            
             return findings
             
         except ClientError as e:
-            logger.error(f"Error validating policy: {str(e)}")
-            raise
-            
-    def get_finding(self, analyzer_arn: str, finding_id: str) -> Dict:
-        """Get details of a specific finding
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_msg = f"Policy validation failed [{error_code}]: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+    
+    def _log_validation_results(self, findings: List[Dict[str, Any]]) -> None:
+        """Log policy validation results"""
+        if not findings:
+            logger.info("Policy validation passed - no issues found")
+            return
         
-        Args:
-            analyzer_arn: ARN of the analyzer
-            finding_id: ID of the finding
-            
-        Returns:
-            Finding details
+        logger.warning(f"Policy validation found {len(findings)} issues")
+        finding_types = {}
+        
+        for finding in findings:
+            finding_type = finding.get('findingType', 'unknown')
+            finding_types[finding_type] = finding_types.get(finding_type, 0) + 1
+            logger.warning(f"Validation issue: {finding_type} - {finding.get('findingDetails', 'No details')}")
+        
+        logger.info(f"Validation findings breakdown: {finding_types}")
+
+    # =============================================================================
+    # Analyzer Management Operations  
+    # =============================================================================
+    
+    def list_analyzers(self) -> List[Dict[str, Any]]:
+        """
+        List all Access Analyzers in the account
         """
         try:
-            response = self.client.get_finding(
-                analyzerArn=analyzer_arn,
-                id=finding_id
-            )
+            logger.info("Listing Access Analyzers")
             
-            logger.info(f"Retrieved finding {finding_id}")
-            return response['finding']
-            
-        except ClientError as e:
-            logger.error(f"Error getting finding details: {str(e)}")
-            raise
-            
-    def list_analyzers(self) -> List[Dict]:
-        """List Access Analyzers in the account
-        
-        Returns:
-            List of analyzers
-        """
-        try:
-            response = self.client.list_analyzers()
+            response = self.access_analyzer.list_analyzers()
             analyzers = response.get('analyzers', [])
-            logger.info(f"Retrieved {len(analyzers)} analyzers")
+            
+            logger.info(f"Found {len(analyzers)} Access Analyzers")
+            self._log_analyzer_details(analyzers)
+            
             return analyzers
             
         except ClientError as e:
-            logger.error(f"Error listing analyzers: {str(e)}")
-            raise
-            
-    def update_findings(self, analyzer_arn: str, finding_ids: List[str], status: str) -> None:
-        """Update status of findings
+            error_code = e.response.get('Error', {}).get('Code', 'Unknown')
+            error_msg = f"Failed to list analyzers [{error_code}]: {str(e)}"
+            logger.error(error_msg)
+            raise AnalyzerError(error_msg) from e
+    
+    def _log_analyzer_details(self, analyzers: List[Dict[str, Any]]) -> None:
+        """Log details of available analyzers"""
+        if not analyzers:
+            logger.warning("No Access Analyzers found")
+            return
         
-        Args:
-            analyzer_arn: ARN of the analyzer
-            finding_ids: List of finding IDs to update
-            status: New status to set
-        """
-        try:
-            self.client.update_findings(
-                analyzerArn=analyzer_arn,
-                ids=finding_ids,
-                status=status
-            )
-            logger.info(f"Updated {len(finding_ids)} findings to status {status}")
+        logger.info("Available analyzers:")
+        for i, analyzer in enumerate(analyzers, 1):
+            name = analyzer.get('name', 'unknown')
+            arn = analyzer.get('arn', 'unknown')
+            status = analyzer.get('status', 'unknown')
+            analyzer_type = analyzer.get('type', 'unknown')
+            created_at = analyzer.get('createdAt', 'unknown')
             
-        except ClientError as e:
-            logger.error(f"Error updating findings: {str(e)}")
-            raise
+            logger.info(f"  {i}. {name} | {status} | {analyzer_type} | {created_at}")
+            logger.debug(f"     ARN: {arn}")
 
+    # =============================================================================
+    # Convenience Methods
+    # =============================================================================
+    
+    def analyze_resources_from_s3(
+        self, 
+        analyzer_arn: str, 
+        bucket_name: str, 
+        prefix: str
+    ) -> Tuple[List[IAMResource], List[Dict[str, Any]], FindingSummary]:
+        """
+        Complete workflow: fetch resources from S3 and analyze findings
+        """
+        logger.info("Starting complete resource analysis workflow")
+        
+        # Fetch resources from S3
+        resources = self.fetch_resources_from_s3(bucket_name, prefix)
+        
+        # Get findings for those resources
+        findings, summary = self.list_findings_for_resources(analyzer_arn, resources)
+        
+        logger.info("Analysis workflow completed successfully")
+        return resources, findings, summary
+
+
+# Maintain backwards compatibility with original class name
+Analyzer = IAMAnalyzer

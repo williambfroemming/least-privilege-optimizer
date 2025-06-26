@@ -18,7 +18,6 @@ infra/terraform/iam/.terraform.lock.hcl
 #--------------------------------------------------
 infra/terraform/modules/iam-parser/lambda/build/
 infra/terraform/modules/iam-parser/lambda/layer/
-infra/terraform/modules/iam-parser/lambda/src/
 infra/terraform/modules/iam-parser/lambda/*.zip
 infra/terraform/modules/iam-parser/lambda/layer.zip
 infra/terraform/modules/iam-parser/lambda/iam_analyzer_engine.zip

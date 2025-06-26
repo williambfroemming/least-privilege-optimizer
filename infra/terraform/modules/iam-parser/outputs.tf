@@ -55,3 +55,24 @@ output "aws_account_id" {
   description = "AWS account ID where resources are deployed"
   value       = data.aws_caller_identity.current.account_id
 }
+
+output "github_token_ssm_path" {
+  description = "SSM parameter path where GitHub token should be stored"
+  value       = var.github_token_ssm_path
+}
+
+output "schedule_expression" {
+  description = "EventBridge schedule expression for automated runs"
+  value       = var.schedule_expression
+}
+
+output "setup_commands" {
+  description = "Commands to complete setup"
+  value = var.create_lambda ? [
+    "# Store your GitHub token:",
+    "aws ssm put-parameter --name '${var.github_token_ssm_path}' --value 'your_github_token_here' --type SecureString",
+    "",
+    "# Test the Lambda manually:",
+    "aws lambda invoke --function-name '${aws_lambda_function.iam_analyzer_engine_tf_deployed[0].function_name}' response.json"
+  ] : []
+}

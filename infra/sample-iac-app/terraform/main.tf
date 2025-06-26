@@ -3,14 +3,23 @@ provider "aws" {
 }
 
 # Import our module
-module "iam_parser" {
+module "iam_analyzer" {
   source  = "../../terraform/modules/iam-parser"
   tf_path = "../../sample-iac-app/terraform"
   
-  # Required variable
+  # Required variables
   environment = "dev"
+  github_repo = "williambfroemming/least-privilege-optimizer"
+  force_lambda_rebuild = true
   
-  # Optional: customize naming
+  # GitHub token configuration
+  github_token_ssm_path = "/github-tokens/iam-analyzer"
+  
+  # Automation settings
+  schedule_expression = "rate(7 days)"  # Run weekly
+  enable_test_mode   = true             # Start with test mode for safety
+  
+  # Optional: customize naming and storage
   s3_prefix             = "iam-analysis"
   lambda_function_name  = "iam-analyzer"
   
@@ -20,6 +29,7 @@ module "iam_parser" {
     ManagedBy   = "Terraform"
     Environment = "dev"
     Owner       = "ScopeDown Team"
+    Purpose     = "Automated IAM least privilege analysis"
   }
 }
 
@@ -206,13 +216,23 @@ output "cloudfront_domain_name" {
     value = aws_cloudfront_distribution.web_app.domain_name
 }
 
-output "iam_scan_output" {
-  description = "IAM analysis results and metadata"
+output "setup_instructions" {
+  description = "Setup instructions for IAM Analyzer"
   value = {
-    bucket            = module.iam_parser.s3_bucket_name     # CHANGED FROM iam_s3_bucket
-    bucket_arn        = module.iam_parser.s3_bucket_arn
-    latest_output_key = module.iam_parser.latest_output_key
-    s3_prefix         = module.iam_parser.s3_prefix
-    aws_region        = module.iam_parser.aws_region
+    github_token_command = "aws ssm put-parameter --name '${module.iam_analyzer.github_token_ssm_path}' --value 'your_github_token_here' --type SecureString"
+    test_lambda_command  = "aws lambda invoke --function-name '${module.iam_analyzer.lambda_function_name}' response.json"
+    s3_bucket           = module.iam_analyzer.s3_bucket_name
+    schedule            = "Runs automatically every 7 days"
+    test_mode           = "Currently in test mode - uses mock data (no AWS API costs)"
   }
+}
+
+output "next_steps" {
+  description = "What to do after deployment"
+  value = [
+    "1. Store your GitHub token: aws ssm put-parameter --name '/github-tokens/iam-analyzer' --value 'ghp_your_token' --type SecureString",
+    "2. Test the Lambda: aws lambda invoke --function-name '${module.iam_analyzer.lambda_function_name}' response.json",
+    "3. Check the created PR in your repository",
+    "4. When ready for production, set enable_test_mode = false and redeploy"
+  ]
 }
