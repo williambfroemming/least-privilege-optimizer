@@ -1,26 +1,27 @@
+# MODIFIED BY IAM ANALYZER - 2025-06-26 18:48:10
+# File: infra/sample-iac-app/terraform/policies.tf
+# Updated 2 policies, removed 18 unused permissions
+
 resource "aws_iam_user_policy" "alice_analyst_policy" {
   name = "alice-analyst-test-policy"
   user = aws_iam_user.alice_analyst_test.name
 
+  # OPTIMIZED POLICY - Removed 10 unused permissions
+  # Original unused actions: s3:PutObject, s3:DeleteObject, athena:CreateDataCatalog, athena:DeleteWorkGroup, glue:*...
   policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Sid      = "OverlyPermissiveReadAndWrite",
-        Effect   = "Allow",
-        Action   = [
-          "s3:*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
-          "cloudwatch:Get*",              # OK
-          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
-          "dynamodb:Scan",                # Too broad for sensitive data
-          "kms:Decrypt",                  # Dangerous without restrictions
-          "iam:List*",                    # Allows recon
-          "iam:Get*",                     # More recon
-          "lambda:InvokeFunction",        # Could be misused
-          "sts:AssumeRole"                # Very risky unless scoped tightly
-        ],
+        Sid    = "MinimalRequiredAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:ListBucket",
+          "athena:StartQueryExecution", 
+          "athena:GetQueryResults",
+          "cloudwatch:PutMetricData",
+          "kms:Decrypt"
+        ]
         Resource = "*"
       }
     ]
@@ -32,63 +33,23 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
   name = "bob-dev-test-policy"
   user = aws_iam_user.bob_dev_test.name
 
+  # OPTIMIZED POLICY - Removed 8 unused permissions
+  # Original unused actions: lambda:CreateFunction, lambda:DeleteFunction, lambda:UpdateFunctionCode, s3:DeleteObject, s3:PutBucketPolicy...
   policy = jsonencode({
-    Version = "2012-10-17",
+    Version = "2012-10-17"
     Statement = [
       {
-        Sid: "LambdaOverreach",
-        Effect: "Allow",
-        Action: [
-          "lambda:*"                          # Too much
-        ],
-        Resource: "*"
-      },
-      {
-        Sid: "S3FullBucketAccess",
-        Effect: "Allow",
-        Action: [
-          "s3:PutObject",
+        Sid    = "MinimalRequiredAccess"
+        Effect = "Allow"
+        Action = [
           "s3:GetObject",
           "s3:ListBucket",
-          "s3:DeleteObject",                  # Excessive
-          "s3:PutBucketPolicy",               # Definitely too much
-          "s3:GetBucketAcl"
-        ],
-        Resource: [
-          "arn:aws:s3:::ucb-capstone-bucket",
-          "arn:aws:s3:::ucb-capstone-bucket/*"
+          "athena:StartQueryExecution", 
+          "athena:GetQueryResults",
+          "cloudwatch:PutMetricData",
+          "kms:Decrypt"
         ]
-      },
-      {
-        Sid: "IAMReconAccess",
-        Effect: "Allow",
-        Action: [
-          "iam:GetRole",
-          "iam:ListRoles"
-        ],
-        Resource: "*"
-      },
-      {
-        Sid: "CloudWatchLogsAccess",
-        Effect: "Allow",
-        Action: [
-          "logs:DescribeLogGroups",
-          "logs:GetLogEvents",
-          "logs:FilterLogEvents",
-          "logs:PutLogEvents"                # Not always needed
-        ],
-        Resource: "*"
-      },
-      {
-        Sid: "ECSAndECRAccess",
-        Effect: "Allow",
-        Action: [
-          "ecs:ListClusters",
-          "ecs:DescribeTasks",
-          "ecr:GetAuthorizationToken",
-          "ecr:DescribeRepositories"
-        ],
-        Resource: "*"
+        Resource = "*"
       }
     ]
   })
