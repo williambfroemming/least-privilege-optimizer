@@ -1,0 +1,7 @@
+# Essential packages only
+PyGithub>=2.1.1
+python-hcl2>=0.3.0
+
+# Keep only if actually used
+aws-lambda-powertools>=2.0.0
+cffi>=1.15.1

@@ -161,6 +161,38 @@ resource "aws_iam_policy" "lambda_ssm_access" {
   tags = local.common_tags
 }
 
+# NEW: CloudTrail Lake permissions (replaces old Athena/Glue permissions)
+resource "aws_iam_policy" "lambda_cloudtrail_lake_access" {
+  count       = var.create_lambda ? 1 : 0
+  name        = "${local.name_prefix}-cloudtrail-lake-policy"
+  description = "Allow Lambda to query CloudTrail Lake Event Data Store"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudtrail:StartQuery",
+          "cloudtrail:DescribeQuery",
+          "cloudtrail:GetQueryResults",
+          "cloudtrail:CancelQuery"
+        ]
+        Resource = aws_cloudtrail_event_data_store.iam_analyzer_store.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudtrail:ListEventDataStores"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
 # Policy attachments with correct resource references
 resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
   count      = var.create_lambda ? 1 : 0
@@ -190,4 +222,10 @@ resource "aws_iam_role_policy_attachment" "lambda_ssm_access_attach" {
   count      = var.create_lambda ? 1 : 0
   role       = aws_iam_role.iam_analyzer_lambda_role[0].name
   policy_arn = aws_iam_policy.lambda_ssm_access[0].arn
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_cloudtrail_lake_attach" {
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.lambda_cloudtrail_lake_access[0].arn
 }

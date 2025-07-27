@@ -3,61 +3,65 @@ provider "aws" {
 }
 
 # Import our module
+# Update your module call in main.tf to include Step Function variables:
+
 module "iam_analyzer" {
   source  = "../../terraform/modules/iam-parser"
-  tf_path = "../../sample-iac-app/terraform"
+  tf_path = "."
   
   # Required variables
   environment = "dev"
   github_repo = "williambfroemming/least-privilege-optimizer"
-  force_lambda_rebuild = true
+  
+  # Step Function configuration - ADD THESE
+  create_step_function = true
+  enable_daily_schedule = false  # Weekly is better for testing
+  
+  # Testing settings
+  enable_test_mode      = true
+  force_lambda_rebuild  = true
+  force_destroy_bucket  = true
+  
+  # CloudTrail configuration for testing
+  enable_cloudtrail_data_lake   = true
+  cloudtrail_retention_days     = 30
   
   # GitHub token configuration
   github_token_ssm_path = "/github-tokens/iam-analyzer"
   
-  # Automation settings
-  schedule_expression = "rate(7 days)"  # Run weekly
-  enable_test_mode   = true             # Start with test mode for safety
+  # Automation settings - Update this for weekly
+  schedule_expression = "cron(0 6 ? * SUN *)"  # Weekly on Sundays
   
-  # Optional: customize naming and storage
+  # Lambda configuration
+  lambda_timeout     = 300
+  lambda_memory_size = 256
+  
+  # Storage configuration
   s3_prefix             = "iam-analysis"
   lambda_function_name  = "iam-analyzer"
   
-  # Optional: add additional tags
+  # Monitoring
+  enable_monitoring  = true
+  log_retention_days = 7
+  
+  # Tags
   tags = {
     Project     = "IAM-Analyzer"
     ManagedBy   = "Terraform"
     Environment = "dev"
     Owner       = "ScopeDown Team"
     Purpose     = "Automated IAM least privilege analysis"
+    Testing     = "true"
   }
-}
-
-# Test IAM Resource
-resource "aws_iam_user" "test_user" {
-  name = "static-parser-test-user"
-}
-
-resource "aws_iam_role" "test_role" {
-  name = "static-parser-test-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "ec2.amazonaws.com"
-        }
-      }
-    ]
-  })
 }
 
 # S3 bucket to store the React web application
 resource "aws_s3_bucket" "web_app" {
     bucket = "react-web-app-bucket-${random_id.suffix.hex}"
+    
+    tags = {
+      Purpose = "Web application hosting"
+    }
 }
 
 resource "random_id" "suffix" {
@@ -206,8 +210,13 @@ resource "aws_cloudfront_distribution" "web_app" {
         response_code      = 200
         response_page_path = "/index.html"
     }
+    
+    tags = {
+      Purpose = "Web application CDN"
+    }
 }
 
+# Outputs
 output "s3_bucket_name" {
     value = aws_s3_bucket.web_app.bucket
 }
@@ -216,14 +225,35 @@ output "cloudfront_domain_name" {
     value = aws_cloudfront_distribution.web_app.domain_name
 }
 
+# IAM Analyzer outputs
+output "iam_analyzer_bucket" {
+    description = "S3 bucket where IAM analysis results are stored"
+    value = module.iam_analyzer.s3_bucket_name
+}
+
+output "lambda_function_name" {
+    description = "Name of the IAM analyzer Lambda function"
+    value = module.iam_analyzer.lambda_function_name
+}
+
+output "cloudtrail_info" {
+    description = "CloudTrail Lake information for API usage analysis"
+    value = {
+        event_data_store_arn = module.iam_analyzer.cloudtrail_event_data_store_arn
+        event_data_store_name = module.iam_analyzer.cloudtrail_event_data_store_name
+        sample_queries = module.iam_analyzer.sample_queries
+    }
+}
+
 output "setup_instructions" {
   description = "Setup instructions for IAM Analyzer"
   value = {
     github_token_command = "aws ssm put-parameter --name '${module.iam_analyzer.github_token_ssm_path}' --value 'your_github_token_here' --type SecureString"
     test_lambda_command  = "aws lambda invoke --function-name '${module.iam_analyzer.lambda_function_name}' response.json"
     s3_bucket           = module.iam_analyzer.s3_bucket_name
-    schedule            = "Runs automatically every 7 days"
+    schedule            = "Runs automatically every day"
     test_mode           = "Currently in test mode - uses mock data (no AWS API costs)"
+    cloudtrail_lake     = module.iam_analyzer.cloudtrail_event_data_store_name
   }
 }
 
@@ -232,7 +262,25 @@ output "next_steps" {
   value = [
     "1. Store your GitHub token: aws ssm put-parameter --name '/github-tokens/iam-analyzer' --value 'ghp_your_token' --type SecureString",
     "2. Test the Lambda: aws lambda invoke --function-name '${module.iam_analyzer.lambda_function_name}' response.json",
-    "3. Check the created PR in your repository",
-    "4. When ready for production, set enable_test_mode = false and redeploy"
+    "3. Check CloudWatch logs: aws logs describe-log-groups --log-group-name-prefix '/aws/lambda/${module.iam_analyzer.lambda_function_name}'",
+    "4. Query CloudTrail Lake directly: Use the CloudTrail console Lake section or AWS CLI",
+    "5. Check the created PR in your repository",
+    "6. When ready for production, set enable_test_mode = false and redeploy"
   ]
+}
+
+# Add these outputs to your main.tf after the existing outputs:
+
+output "step_function_info" {
+  description = "Step Function workflow information"
+  value = {
+    arn         = module.iam_analyzer.step_function_arn
+    name        = module.iam_analyzer.step_function_name
+    console_url = module.iam_analyzer.step_function_console_url
+  }
+}
+
+output "workflow_test_command" {
+  description = "Command to test the Step Function workflow"
+  value = module.iam_analyzer.step_function_arn != null ? "aws stepfunctions start-execution --state-machine-arn '${module.iam_analyzer.step_function_arn}' --name 'test-$(date +%s)' --input '{}'" : "Step Function not created"
 }

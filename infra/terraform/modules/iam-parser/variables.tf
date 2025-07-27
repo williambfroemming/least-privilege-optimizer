@@ -195,19 +195,49 @@ variable "github_token_ssm_path" {
   }
 }
 
-variable "schedule_expression" {
-  description = "EventBridge schedule expression for automated runs"
-  type        = string
-  default     = "rate(7 days)"  # Weekly by default
-  
-  validation {
-    condition     = can(regex("^(rate\\(.*\\)|cron\\(.*\\))$", var.schedule_expression))
-    error_message = "Schedule expression must be valid EventBridge format."
-  }
-}
-
 variable "enable_test_mode" {
   description = "Enable test mode (uses mock data instead of real Access Analyzer)"
   type        = bool
   default     = false
+}
+
+variable "enable_cloudtrail_data_lake" {
+  description = "Enable CloudTrail data lake for usage analysis"
+  type        = bool
+  default     = true
+}
+
+variable "cloudtrail_retention_days" {
+  description = "Retention period for CloudTrail logs in the data lake (days)"
+  type        = number
+  default     = 90
+  
+  validation {
+    condition     = var.cloudtrail_retention_days >= 1 && var.cloudtrail_retention_days <= 365
+    error_message = "CloudTrail retention must be between 1 and 365 days."
+  }
+}
+
+# Step Function Controls
+variable "create_step_function" {
+  description = "Whether to create the Step Function workflow"
+  type        = bool
+  default     = true
+}
+
+variable "enable_daily_schedule" {
+  description = "Enable daily scheduled execution of IAM analysis"
+  type        = bool
+  default     = false
+}
+
+variable "schedule_expression" {
+  description = "CloudWatch Events schedule expression for Step Function runs"
+  type        = string
+  default     = "cron(0 6 ? * SUN *)"  # Weekly on Sundays at 6 AM UTC
+  
+  validation {
+    condition     = can(regex("^(rate\\(.*\\)|cron\\(.*\\))$", var.schedule_expression))
+    error_message = "Schedule expression must be valid EventBridge/CloudWatch Events format."
+  }
 }

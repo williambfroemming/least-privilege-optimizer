@@ -17,22 +17,22 @@ resource "null_resource" "lambda_build" {
 }
 
 # Lambda Layer for dependencies
-resource "aws_lambda_layer_version" "dependencies" {
-  count = var.create_lambda ? 1 : 0
+# resource "aws_lambda_layer_version" "dependencies" {
+#   count = var.create_lambda ? 1 : 0
   
-  filename                 = "${path.module}/lambda/layer.zip"
-  layer_name              = "${local.name_prefix}-dependencies"
-  description             = "Dependencies for IAM Analyzer Lambda"
-  compatible_runtimes     = [var.python_runtime]
-  compatible_architectures = ["x86_64"]
-  source_code_hash        = null_resource.lambda_build[0].id
+#   filename                 = "${path.module}/lambda/layer.zip"
+#   layer_name              = "${local.name_prefix}-dependencies"
+#   description             = "Dependencies for IAM Analyzer Lambda"
+#   compatible_runtimes     = [var.python_runtime]
+#   compatible_architectures = ["x86_64"]
+#   source_code_hash        = null_resource.lambda_build[0].id
   
-  depends_on = [null_resource.lambda_build]
+#   depends_on = [null_resource.lambda_build]
   
-  lifecycle {
-    create_before_destroy = true
-  }
-}
+#   lifecycle {
+#     create_before_destroy = true
+#   }
+# }
 
 # CloudWatch Log Group - Created before Lambda to control retention
 resource "aws_cloudwatch_log_group" "lambda_logs" {
@@ -61,9 +61,9 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
   source_code_hash = null_resource.lambda_build[0].id
   
   # Use the layer for dependencies
-  layers = var.create_lambda && length(aws_lambda_layer_version.dependencies) > 0 ? [aws_lambda_layer_version.dependencies[0].arn] : []
+  # layers = var.create_lambda && length(aws_lambda_layer_version.dependencies) > 0 ? [aws_lambda_layer_version.dependencies[0].arn] : []
 
- environment {
+environment {
   variables = {
     S3_BUCKET                  = aws_s3_bucket.iam_parser_output.bucket
     S3_PREFIX                  = var.s3_prefix
@@ -72,7 +72,10 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
     ANALYZER_ARN               = var.analyzer_arn
     GITHUB_REPO                = var.github_repo
     IAM_ANALYZER_TEST_MODE     = var.enable_test_mode ? "true" : "false"
-    GITHUB_TOKEN_SSM_PATH      = var.github_token_ssm_path  # Add this line
+    GITHUB_TOKEN_SSM_PATH      = var.github_token_ssm_path
+    # CloudTrail Lake environment variables
+    CLOUDTRAIL_EVENT_DATA_STORE_ARN = aws_cloudtrail_event_data_store.iam_analyzer_store.arn
+    CLOUDTRAIL_RETENTION_DAYS       = var.cloudtrail_retention_days
   }
 }
 
@@ -80,7 +83,7 @@ resource "aws_lambda_function" "iam_analyzer_engine_tf_deployed" {
 
   depends_on = [
     null_resource.lambda_build,
-    aws_lambda_layer_version.dependencies,
+    # aws_lambda_layer_version.dependencies,
     aws_cloudwatch_log_group.lambda_logs
   ]
   

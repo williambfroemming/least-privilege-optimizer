@@ -65,7 +65,7 @@ mkdir -p layer/python
 echo -e "${GREEN}Installing dependencies to layer...${NC}"
 
 # Install dependencies to layer (for heavy dependencies)
-if [ -f "src/requirements.txt" ]; then
+if [ -f "requirements.txt" ]; then
     echo -e "${BLUE}Installing Python dependencies...${NC}"
     
     # Retry mechanism for pip install in case of network/time issues
@@ -76,7 +76,7 @@ if [ -f "src/requirements.txt" ]; then
         while [ $attempt -le $max_attempts ]; do
             echo -e "${YELLOW}Dependency installation attempt $attempt/$max_attempts...${NC}"
             
-            if pip install -r src/requirements.txt \
+            if pip install -r requirements.txt \
                 --target ./layer/python \
                 --platform manylinux2014_x86_64 \
                 --implementation cp \
@@ -87,7 +87,7 @@ if [ -f "src/requirements.txt" ]; then
                 return 0
             elif [ $attempt -eq $max_attempts ]; then
                 echo -e "${YELLOW}Binary-only install failed on all attempts, trying with source packages...${NC}"
-                if pip install -r src/requirements.txt \
+                if pip install -r requirements.txt \
                     --target ./layer/python \
                     --upgrade; then
                     echo -e "${GREEN}Source package installation successful!${NC}"
@@ -121,15 +121,25 @@ if [ -f "src/requirements.txt" ]; then
         echo -e "${YELLOW}typing_extensions installation failed, continuing...${NC}"
     }
 else
-    echo -e "${RED}src/requirements.txt not found!${NC}"
+    echo -e "${RED}requirements.txt not found!${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}Copying Lambda function code to build directory...${NC}"
 
+# Install minimal dependencies directly to build directory
+if [ -f "requirements.txt" ]; then
+    pip install -r requirements.txt \
+        --target ./build \
+        --upgrade \
+        --no-deps || {
+        echo -e "${YELLOW}Direct dependency installation failed, continuing...${NC}"
+    }
+fi
+
 # Copy Lambda function code from src directory
-cp src/*.py build/ 2>/dev/null || echo -e "${YELLOW}No Python files to copy from src/${NC}"
-cp -r src/modules build/ 2>/dev/null || echo -e "${YELLOW}No modules directory to copy${NC}"
+cp *.py build/ 2>/dev/null || echo -e "${YELLOW}No Python files to copy${NC}"
+cp -r modules build/ 2>/dev/null || echo -e "${YELLOW}No modules directory to copy${NC}"
 
 # Remove test files and unnecessary items from build
 echo -e "${YELLOW}Cleaning up build directory...${NC}"

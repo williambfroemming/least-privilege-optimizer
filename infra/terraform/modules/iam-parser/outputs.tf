@@ -66,13 +66,60 @@ output "schedule_expression" {
   value       = var.schedule_expression
 }
 
+# CloudTrail Lake Outputs
+output "cloudtrail_event_data_store_arn" {
+  description = "ARN of the CloudTrail Lake Event Data Store"
+  value       = aws_cloudtrail_event_data_store.iam_analyzer_store.arn
+}
+
+output "cloudtrail_event_data_store_name" {
+  description = "Name of the CloudTrail Lake Event Data Store"
+  value       = aws_cloudtrail_event_data_store.iam_analyzer_store.name
+}
+
+# Sample queries for CloudTrail Lake
+output "sample_queries" {
+  description = "Sample SQL queries for CloudTrail Lake analysis"
+  value = {
+    iam_usage_query = local.iam_usage_query
+    user_frequency_query = local.user_frequency_query
+    unused_permissions_query = local.unused_permissions_query
+  }
+}
+
 output "setup_commands" {
   description = "Commands to complete setup"
-  value = var.create_lambda ? [
+  value = var.create_lambda ? concat([
     "# Store your GitHub token:",
     "aws ssm put-parameter --name '${var.github_token_ssm_path}' --value 'your_github_token_here' --type SecureString",
     "",
     "# Test the Lambda manually:",
-    "aws lambda invoke --function-name '${aws_lambda_function.iam_analyzer_engine_tf_deployed[0].function_name}' response.json"
-  ] : []
+    "aws lambda invoke --function-name '${aws_lambda_function.iam_analyzer_engine_tf_deployed[0].function_name}' response.json",
+    "",
+    "# CloudTrail Lake Setup:",
+    "# 1. Data starts appearing immediately in CloudTrail Lake",
+    "# 2. You can query directly using SQL in the CloudTrail console or AWS CLI",
+    "# 3. Example query to test:",
+    "aws cloudtrail start-query --query-statement \"SELECT eventTime, eventName, eventSource FROM ${aws_cloudtrail_event_data_store.iam_analyzer_store.arn} WHERE eventTime > '${formatdate("YYYY-MM-DD", timeadd(timestamp(), "-24h"))}' LIMIT 10\""
+  ]) : [
+    "# CloudTrail Lake Setup:",
+    "# 1. Data starts appearing immediately in CloudTrail Lake", 
+    "# 2. You can query directly using SQL in the CloudTrail console or AWS CLI"
+  ]
+}
+
+# Step Function Outputs
+output "step_function_arn" {
+  description = "ARN of the Step Function state machine"
+  value       = var.create_step_function && var.create_lambda ? aws_sfn_state_machine.iam_analyzer[0].arn : null
+}
+
+output "step_function_name" {
+  description = "Name of the Step Function state machine"
+  value       = var.create_step_function && var.create_lambda ? aws_sfn_state_machine.iam_analyzer[0].name : null
+}
+
+output "step_function_console_url" {
+  description = "AWS Console URL for the Step Function"
+  value       = var.create_step_function && var.create_lambda ? "https://${data.aws_region.current.name}.console.aws.amazon.com/states/home?region=${data.aws_region.current.name}#/statemachines/view/${aws_sfn_state_machine.iam_analyzer[0].arn}" : null
 }
