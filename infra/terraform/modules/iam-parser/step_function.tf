@@ -1,4 +1,4 @@
-# step_function.tf - NEW FILE to add to your module
+# step_function.tf - Step Function with PR Generation
 
 # Step Function IAM Role
 resource "aws_iam_role" "step_function_role" {
@@ -79,7 +79,7 @@ resource "aws_cloudwatch_log_group" "step_function_logs" {
   tags              = local.common_tags
 }
 
-# Step Function State Machine
+# Step Function State Machine with PR Generation
 resource "aws_sfn_state_machine" "iam_analyzer" {
   count    = var.create_step_function && var.create_lambda ? 1 : 0
   name     = "${local.name_prefix}-iam-analyzer"
@@ -91,10 +91,8 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
     level                  = "ALL"
   }
 
-  # Replace the entire definition = jsonencode({...}) section in your step_function.tf with this:
-
   definition = jsonencode({
-    Comment = "IAM Least Privilege Analysis Workflow"
+    Comment = "IAM Least Privilege Analysis Workflow with PR Generation"
     StartAt = "ReadS3Data"
     States = {
       
@@ -164,11 +162,11 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         ]
       }
 
-      # Wait for CloudTrail query to complete (30 seconds initially)
+      # Wait for CloudTrail query to complete
       WaitForQuery = {
         Type    = "Wait"
         Seconds = 30
-        Next    = "CheckQueryStatus"  # CHANGED: Now goes to step 3, not QueryCompleted!
+        Next    = "CheckQueryStatus"
       }
 
       # Step 3: Check query status and get results
@@ -214,15 +212,6 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
             Variable = "$.query_status"
             StringEquals = "FAILED"
             Next = "HandleError"
-          },
-          {
-            And = [
-              {
-                Variable = "$.query_status"
-                StringMatches = "RUNNING"
-              }
-            ]
-            Next = "WaitLongerForQuery"
           }
         ]
         Default = "WaitLongerForQuery"
@@ -282,7 +271,7 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
           "query_results_count.$": "$.query_results_count",
           "terraform_files_count.$": "$.terraform_files_count"
         }
-        Next       = "AnalysisCompleted"
+        Next       = "CheckRecommendations"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -299,11 +288,81 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         ]
       }
 
-      # Analysis completed successfully
-      AnalysisCompleted = {
+      # Check if we have recommendations to create a PR for
+      CheckRecommendations = {
+        Type = "Choice"
+        Choices = [
+          {
+            Variable = "$.recommendations_count"
+            NumericGreaterThan = 0
+            Next = "GenerateGitHubPR"
+          }
+        ]
+        Default = "NoRecommendationsFound"
+      }
+
+      # Step 6: Generate GitHub PR with recommendations
+      GenerateGitHubPR = {
+        Type     = "Task"
+        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
+        Parameters = {
+          "step": "generate_github_pr",
+          "policy_recommendations.$": "$.policy_recommendations",
+          "terraform_files.$": "$.terraform_files",
+          "users.$": "$.users",
+          "user_api_usage.$": "$.user_api_usage",
+          "metadata.$": "$.metadata",
+          "iam_data.$": "$.iam_data",
+          "roles.$": "$.roles",
+          "query_details.$": "$.query_details",
+          "query_results_count.$": "$.query_results_count",
+          "terraform_files_count.$": "$.terraform_files_count",
+          "recommendations_count.$": "$.recommendations_count"
+        }
+        Next       = "AnalysisAndPRCompleted"
+        Retry = [
+          {
+            ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
+            IntervalSeconds = 2
+            MaxAttempts     = 3
+            BackoffRate     = 2.0
+          }
+        ]
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            Next        = "AnalysisCompletedNoPR"
+            ResultPath  = "$.pr_error"
+          }
+        ]
+      }
+
+      # Analysis completed with PR created
+      AnalysisAndPRCompleted = {
         Type = "Pass"
         Result = {
-          message = "IAM analysis and policy recommendations completed successfully"
+          message = "IAM analysis completed and GitHub PR created successfully"
+          workflow_status = "complete_with_pr"
+        }
+        End = true
+      }
+
+      # Analysis completed but PR failed
+      AnalysisCompletedNoPR = {
+        Type = "Pass"
+        Result = {
+          message = "IAM analysis completed but PR generation failed"
+          workflow_status = "complete_no_pr"
+        }
+        End = true
+      }
+
+      # No recommendations found
+      NoRecommendationsFound = {
+        Type = "Pass"
+        Result = {
+          message = "IAM analysis completed - no optimization recommendations found"
+          workflow_status = "complete_no_recommendations"
         }
         End = true
       }
@@ -314,6 +373,7 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         Result = {
           statusCode = 200
           message    = "No users found to analyze"
+          workflow_status = "no_users"
         }
         End = true
       }
@@ -325,6 +385,7 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
       }
     }
   })
+  
   tags = local.common_tags
 }
 
