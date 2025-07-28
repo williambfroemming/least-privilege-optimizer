@@ -1,30 +1,22 @@
 resource "aws_iam_user_policy" "alice_analyst_policy" {
-  name = "alice-analyst-test-policy"
+  name = "alice-analyst-policy"
   user = aws_iam_user.alice_analyst_test.name
 
   policy = jsonencode({
-    Version = "2012-10-17",
-    Statement = [
-      {
-        Sid      = "OverlyPermissiveReadAndWrite",
-        Effect   = "Allow",
-        Action   = [
-          "s3:*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
-          "cloudwatch:Get*",              # OK
-          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
-          "dynamodb:Scan",                # Too broad for sensitive data
-          "kms:Decrypt",                  # Dangerous without restrictions
-          "iam:List*",                    # Allows recon
-          "iam:Get*",                     # More recon
-          "lambda:InvokeFunction",        # Could be misused
-          "sts:AssumeRole"                # Very risky unless scoped tightly
-        ],
-        Resource = "*"
-      }
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "LeastPrivilegeOptimized",
+            "Effect": "Allow",
+            "Action": [
+                "iam:ListRoles",
+                "s3:GetBucketLocation",
+                "s3:PutObject"
+            ],
+            "Resource": "*"
+        }
     ]
-  })
+})
 }
 
 
