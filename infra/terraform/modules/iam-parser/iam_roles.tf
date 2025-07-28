@@ -1,3 +1,5 @@
+# iam_roles.tf - Updated for multi-function architecture
+
 # Data sources to get current AWS account ID and region
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -22,7 +24,7 @@ resource "aws_iam_role" "iam_analyzer_lambda_role" {
   tags = local.common_tags
 }
 
-# IMPROVED: More restrictive logging policy with least privilege
+# UPDATED: Logging policy now covers all functions
 resource "aws_iam_policy" "lambda_logging" {
   count       = var.create_lambda ? 1 : 0
   name        = "${local.name_prefix}-logging-policy"
@@ -34,7 +36,7 @@ resource "aws_iam_policy" "lambda_logging" {
       {
         Effect = "Allow",
         Action = "logs:CreateLogGroup",
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-${var.lambda_function_name}"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-*"
       },
       {
         Effect = "Allow",
@@ -42,7 +44,7 @@ resource "aws_iam_policy" "lambda_logging" {
           "logs:CreateLogStream",
           "logs:PutLogEvents"
         ],
-        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-${var.lambda_function_name}:*"
+        Resource = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/${local.name_prefix}-*:*"
       }
     ]
   })
@@ -161,6 +163,45 @@ resource "aws_iam_policy" "lambda_ssm_access" {
   tags = local.common_tags
 }
 
+# NEW: CloudTrail Lake permissions (replaces old Athena/Glue permissions)
+resource "aws_iam_policy" "lambda_cloudtrail_lake_access" {
+  count       = var.create_lambda ? 1 : 0
+  name        = "${local.name_prefix}-cloudtrail-lake-policy"
+  description = "Allow Lambda to query CloudTrail Lake Event Data Store"
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudtrail:StartQuery",
+          "cloudtrail:DescribeQuery",
+          "cloudtrail:GetQueryResults",
+          "cloudtrail:CancelQuery"
+        ]
+        Resource = aws_cloudtrail_event_data_store.iam_analyzer_store.arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "cloudtrail:ListEventDataStores"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+
+  tags = local.common_tags
+}
+
+# ADDED: Basic Lambda execution role (was missing)
+resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
 # Policy attachments with correct resource references
 resource "aws_iam_role_policy_attachment" "lambda_logs_attach" {
   count      = var.create_lambda ? 1 : 0
@@ -190,4 +231,10 @@ resource "aws_iam_role_policy_attachment" "lambda_ssm_access_attach" {
   count      = var.create_lambda ? 1 : 0
   role       = aws_iam_role.iam_analyzer_lambda_role[0].name
   policy_arn = aws_iam_policy.lambda_ssm_access[0].arn
+}
+
+resource "aws_iam_role_policy_attachment" "lambda_cloudtrail_lake_attach" {
+  count      = var.create_lambda ? 1 : 0
+  role       = aws_iam_role.iam_analyzer_lambda_role[0].name
+  policy_arn = aws_iam_policy.lambda_cloudtrail_lake_access[0].arn
 }
