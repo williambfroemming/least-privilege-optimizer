@@ -1,4 +1,4 @@
-# step6_github_pr/index.py - FINAL WORKING VERSION
+# step6_github_pr/index.py - UPDATED VERSION - PRESERVE ACCESS WHEN NO API CALLS
 
 import os
 import json
@@ -52,8 +52,17 @@ def lambda_handler(event, context):
         github_token = response['Parameter']['Value']
 
         # Apply actual modifications to file content BEFORE creating PR
-        processed_modifications = apply_all_terraform_modifications(
+        # Filter out changes that would remove access when no API calls exist
+        filtered_modifications = filter_safe_modifications(
             file_modifications, policy_recommendations
+        )
+
+        if not filtered_modifications:
+            logger.info("No safe changes to apply after filtering")
+            return create_response(False, "No safe changes to apply - all users have no API activity")
+
+        processed_modifications = apply_all_terraform_modifications(
+            filtered_modifications, policy_recommendations
         )
 
         if not processed_modifications:
@@ -76,6 +85,77 @@ def lambda_handler(event, context):
     except Exception as e:
         logger.error(f"Error in step 6: {e}")
         return create_response(False, f"Error: {str(e)}")
+
+def filter_safe_modifications(file_modifications, policy_recommendations):
+    """Filter out modifications that would remove access when no API calls exist"""
+    safe_modifications = {}
+    
+    for file_path, file_data in file_modifications.items():
+        safe_changes = []
+        
+        for change in file_data.get('changes', []):
+            policy_name = change.get('policy_name')
+            
+            # Find the user recommendation that corresponds to this policy
+            # by looking for a recommendation that references this policy name
+            user_rec = None
+            user_name = None
+            
+            for username, rec in policy_recommendations.items():
+                policy_details = rec.get('policy_details', [])
+                for policy_detail in policy_details:
+                    if policy_detail.get('terraform_resource_name') == policy_name:
+                        user_rec = rec
+                        user_name = username
+                        break
+                if user_rec:
+                    break
+            
+            if not user_rec:
+                logger.warning(f"Could not find recommendation for policy {policy_name} - allowing change")
+                safe_changes.append(change)
+                continue
+                
+            used_actions = user_rec.get('used_actions', [])
+            
+            if change['type'] == 'policy_removal':
+                # Only allow removal if user has SOME used actions (meaning they had API activity)
+                # If used_actions is empty, it means no API calls were found - preserve access
+                if used_actions:
+                    safe_changes.append(change)
+                    logger.info(f"Allowing removal of {policy_name} - user {user_name} has {len(used_actions)} used actions")
+                else:
+                    logger.info(f"SKIPPING removal of {policy_name} - user {user_name} has no API activity, preserving access")
+                    
+            elif change['type'] == 'policy_optimization':
+                # Only allow optimization if user has used actions
+                # If no used actions, preserve the original broad permissions
+                if used_actions:
+                    safe_changes.append(change)
+                    logger.info(f"Allowing optimization of {policy_name} - user {user_name} has {len(used_actions)} used actions")
+                else:
+                    logger.info(f"SKIPPING optimization of {policy_name} - user {user_name} has no API activity, preserving original permissions")
+            else:
+                # Allow other types of changes
+                safe_changes.append(change)
+        
+        # Only include files that have safe changes
+        if safe_changes:
+            safe_modifications[file_path] = {
+                **file_data,
+                'changes': safe_changes
+            }
+            logger.info(f"File {file_path}: {len(safe_changes)} safe changes (was {len(file_data.get('changes', []))})")
+        else:
+            logger.info(f"File {file_path}: No safe changes - all users have no API activity")
+    
+    logger.info(f"Filtered to {len(safe_modifications)} files with safe modifications")
+    return safe_modifications
+
+def extract_username_from_policy_name(policy_name):
+    """Extract username from policy name by matching against actual recommendation keys"""
+    # Instead of guessing the username format, find the best match from actual recommendations
+    return None  # We'll handle this differently in the calling function
 
 def create_response(pr_created, pr_message, pr_result=None):
     """Create standardized response"""
@@ -236,7 +316,7 @@ def create_github_pr_with_changes(repo, token, recommendations, users, file_modi
         pr_description = generate_detailed_pr_description(recommendations, users, files_committed, file_modifications)
 
         pr_data = {
-            "title": f"IAM Least Privilege: Optimize {len([r for r in recommendations.values() if r.get('recommendation') == 'optimize_permissions'])} users",
+            "title": f"IAM Least Privilege: Optimize {len([r for r in recommendations.values() if r.get('recommendation') == 'optimize_permissions' and r.get('used_actions')])} users with API activity",
             "body": pr_description,
             "head": branch_name,
             "base": "main"
@@ -331,15 +411,21 @@ def get_existing_file_sha(http, headers, repo, file_path):
 
 def generate_detailed_pr_description(recommendations, users, files_committed, file_modifications):
     """Generate comprehensive PR description"""
-    users_optimized = len([r for r in recommendations.values() if r.get('recommendation') == 'optimize_permissions'])
-    total_unused = sum(len(r.get('unused_actions', [])) for r in recommendations.values())
+    # Only count users who actually have API activity and are being optimized
+    users_optimized = len([r for r in recommendations.values() 
+                          if r.get('recommendation') == 'optimize_permissions' and r.get('used_actions')])
+    total_unused = sum(len(r.get('unused_actions', [])) for r in recommendations.values() 
+                      if r.get('used_actions'))  # Only count if user has API activity
 
     description = f"""## 🔒 IAM Least Privilege Optimization
 
 This PR implements least privilege IAM policies based on 30 days of CloudTrail analysis.
 
+⚠️ **IMPORTANT**: Users with no API activity in the last 30 days were left unchanged to preserve access.
+
 ### 📊 Summary
 - **Users optimized:** {users_optimized}
+- **Users preserved (no API activity):** {len([r for r in recommendations.values() if not r.get('used_actions', [])])}
 - **Unused permissions removed:** {total_unused}
 - **Terraform files modified:** {len(files_committed)}
 
@@ -357,22 +443,30 @@ This PR implements least privilege IAM policies based on 30 days of CloudTrail a
         description += "\n"
 
     description += "### 👥 User-by-User Analysis\n"
+    
+    # Users with changes
     for user_name, rec in recommendations.items():
-        if rec.get('recommendation') == 'optimize_permissions':
+        if rec.get('recommendation') == 'optimize_permissions' and rec.get('used_actions'):
             risk = rec.get('risk_level', 'unknown').upper()
             used_actions = rec.get('used_actions', [])
             unused_count = len(rec.get('unused_actions', []))
             
-            description += f"**{user_name}** ({risk} RISK):\n"
-            if used_actions:
-                description += f"- Reduced to {len(used_actions)} used permissions, removed {unused_count} unused\n"
-                description += f"- Now limited to: `{', '.join(used_actions[:5])}{'...' if len(used_actions) > 5 else ''}`\n"
-            else:
-                description += f"- Had {unused_count} unused permissions - entire policy removed\n"
-            description += "\n"
+            description += f"**{user_name}** ({risk} RISK) - ✅ OPTIMIZED:\n"
+            description += f"- Reduced to {len(used_actions)} used permissions, removed {unused_count} unused\n"
+            description += f"- Now limited to: `{', '.join(used_actions[:5])}{'...' if len(used_actions) > 5 else ''}`\n\n"
+    
+    # Users preserved
+    preserved_users = [user_name for user_name, rec in recommendations.items() 
+                      if not rec.get('used_actions', [])]
+    if preserved_users:
+        description += "**Users Preserved (No API Activity):**\n"
+        for user_name in preserved_users:
+            description += f"- **{user_name}**: No API calls detected - keeping existing permissions\n"
+        description += "\n"
 
     description += """### ⚠️ Safety Notes
 - Changes are based on **last 30 days** of API usage
+- **Users with no API activity were preserved** to avoid breaking access
 - **Test thoroughly** in staging before merging to production
 - **Monitor applications** after deployment
 - Consider gradually rolling out changes to detect any missing permissions
@@ -382,6 +476,7 @@ This PR implements least privilege IAM policies based on 30 days of CloudTrail a
 - Better compliance with least privilege principle
 - Easier security auditing and policy management
 - Limited blast radius if credentials are compromised
+- Conservative approach preserves access when usage is unclear
 
 ---
 *Generated automatically by IAM Least Privilege Analyzer*
