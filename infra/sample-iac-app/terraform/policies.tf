@@ -9,24 +9,15 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
         Sid      = "OverlyPermissiveReadAndWrite",
         Effect   = "Allow",
         Action   = [
-          "s3:*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
-          "cloudwatch:Get*",              # OK
-          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
-          "dynamodb:Scan",                # Too broad for sensitive data
-          "kms:Decrypt",                  # Dangerous without restrictions
-          "iam:List*",                    # Allows recon
-          "iam:Get*",                     # More recon
-          "lambda:InvokeFunction",        # Could be misused
-          "sts:AssumeRole"                # Very risky unless scoped tightly
+          "iam:ListRoles",
+          "s3:PutObject",
+          "s3:GetBucketLocation"
         ],
         Resource = "*"
       }
     ]
   })
 }
-
 
 resource "aws_iam_user_policy" "bob_dev_policy" {
   name = "bob-dev-test-policy"
@@ -93,7 +84,6 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
     ]
   })
 }
-
 
 resource "aws_iam_user_policy_attachment" "charlie_admin_access" {
   user       = aws_iam_user.charlie_admin_test.name
