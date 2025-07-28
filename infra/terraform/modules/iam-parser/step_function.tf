@@ -1,4 +1,4 @@
-# step_function.tf - Step Function with PR Generation
+# step_function.tf - Step Function resources only
 
 # Step Function IAM Role
 resource "aws_iam_role" "step_function_role" {
@@ -21,7 +21,7 @@ resource "aws_iam_role" "step_function_role" {
   tags = local.common_tags
 }
 
-# Step Function permissions to invoke your existing Lambda
+# Step Function permissions to invoke all Lambda functions
 resource "aws_iam_role_policy" "step_function_lambda_policy" {
   count = var.create_step_function && var.create_lambda ? 1 : 0
   name  = "${local.name_prefix}-stepfunction-lambda"
@@ -36,8 +36,7 @@ resource "aws_iam_role_policy" "step_function_lambda_policy" {
           "lambda:InvokeFunction"
         ]
         Resource = [
-          aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn,
-          "${aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn}:*"
+          for func_arn in values(aws_lambda_function.iam_analyzer_functions) : func_arn.arn
         ]
       }
     ]
@@ -79,7 +78,19 @@ resource "aws_cloudwatch_log_group" "step_function_logs" {
   tags              = local.common_tags
 }
 
-# Step Function State Machine with PR Generation
+# Local values for function ARNs
+locals {
+  function_arns = var.create_lambda ? {
+    read_s3           = aws_lambda_function.iam_analyzer_functions["read-s3"].arn
+    start_cloudtrail  = aws_lambda_function.iam_analyzer_functions["start-cloudtrail"].arn
+    check_cloudtrail  = aws_lambda_function.iam_analyzer_functions["check-cloudtrail"].arn
+    fetch_terraform   = aws_lambda_function.iam_analyzer_functions["fetch-terraform"].arn
+    parse_policies    = aws_lambda_function.iam_analyzer_functions["parse-policies"].arn
+    generate_pr       = aws_lambda_function.iam_analyzer_functions["generate-pr"].arn
+  } : {}
+}
+
+# Step Function State Machine - FIXED with no problematic Parameters
 resource "aws_sfn_state_machine" "iam_analyzer" {
   count    = var.create_step_function && var.create_lambda ? 1 : 0
   name     = "${local.name_prefix}-iam-analyzer"
@@ -92,19 +103,15 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
   }
 
   definition = jsonencode({
-    Comment = "IAM Least Privilege Analysis Workflow with PR Generation"
+    Comment = "IAM Least Privilege Analysis Workflow with Multiple Lambda Functions"
     StartAt = "ReadS3Data"
     States = {
       
-      # Step 1: Read IAM data from S3
+      # Step 1: Read IAM data from S3 (dedicated function)
       ReadS3Data = {
         Type     = "Task"
-        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
-        Parameters = {
-          "step": "read_s3_data",
-          "input.$": "$"
-        }
-        Next       = "CheckUsersExist"
+        Resource = local.function_arns.read_s3
+        Next     = "CheckUsersExist"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -134,18 +141,11 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         Default = "NoUsersFound"
       }
 
-      # Step 2: Start CloudTrail Lake query
+      # Step 2: Start CloudTrail Lake query (dedicated function)
       StartCloudTrailQuery = {
         Type     = "Task"
-        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
-        Parameters = {
-          "step": "start_cloudtrail_query",
-          "users.$": "$.users",
-          "metadata.$": "$.metadata",
-          "iam_data.$": "$.iam_data",
-          "roles.$": "$.roles"
-        }
-        Next       = "WaitForQuery"
+        Resource = local.function_arns.start_cloudtrail
+        Next     = "WaitForQuery"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -169,20 +169,11 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         Next    = "CheckQueryStatus"
       }
 
-      # Step 3: Check query status and get results
+      # Step 3: Check query status (dedicated function)
       CheckQueryStatus = {
         Type     = "Task"
-        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
-        Parameters = {
-          "step": "check_cloudtrail_query",
-          "query_id.$": "$.query_id",
-          "users.$": "$.users",
-          "metadata.$": "$.metadata",
-          "iam_data.$": "$.iam_data",
-          "roles.$": "$.roles",
-          "query_details.$": "$.query_details"
-        }
-        Next       = "EvaluateQueryStatus"
+        Resource = local.function_arns.check_cloudtrail
+        Next     = "EvaluateQueryStatus"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -206,7 +197,7 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
           {
             Variable = "$.query_status"
             StringEquals = "FINISHED"
-            Next = "QueryFinishedSuccessfully"
+            Next = "FetchTerraformFiles"
           },
           {
             Variable = "$.query_status"
@@ -224,21 +215,11 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         Next = "CheckQueryStatus"
       }
 
-      # Step 4: Fetch Terraform files from GitHub
-      QueryFinishedSuccessfully = {
+      # Step 4: Fetch Terraform files (dedicated function)
+      FetchTerraformFiles = {
         Type     = "Task"
-        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
-        Parameters = {
-          "step": "fetch_terraform_files",
-          "user_api_usage.$": "$.user_api_usage",
-          "users.$": "$.users",
-          "metadata.$": "$.metadata",
-          "iam_data.$": "$.iam_data",
-          "roles.$": "$.roles",
-          "query_details.$": "$.query_details",
-          "query_results_count.$": "$.query_results_count"
-        }
-        Next       = "ParseTerraformPolicies"
+        Resource = local.function_arns.fetch_terraform
+        Next     = "ParseTerraformPolicies"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -255,23 +236,11 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         ]
       }
 
-      # Step 5: Parse Terraform policies and generate recommendations
+      # Step 5: Parse Terraform policies (dedicated function)
       ParseTerraformPolicies = {
         Type     = "Task"
-        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
-        Parameters = {
-          "step": "parse_terraform_policies",
-          "terraform_files.$": "$.terraform_files",
-          "user_api_usage.$": "$.user_api_usage",
-          "users.$": "$.users",
-          "metadata.$": "$.metadata",
-          "iam_data.$": "$.iam_data",
-          "roles.$": "$.roles",
-          "query_details.$": "$.query_details",
-          "query_results_count.$": "$.query_results_count",
-          "terraform_files_count.$": "$.terraform_files_count"
-        }
-        Next       = "CheckRecommendations"
+        Resource = local.function_arns.parse_policies
+        Next     = "CheckRecommendations"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -301,25 +270,11 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         Default = "NoRecommendationsFound"
       }
 
-      # Step 6: Generate GitHub PR with recommendations
+      # Step 6: Generate GitHub PR (dedicated function)
       GenerateGitHubPR = {
         Type     = "Task"
-        Resource = aws_lambda_function.iam_analyzer_engine_tf_deployed[0].arn
-        Parameters = {
-          "step": "generate_github_pr",
-          "policy_recommendations.$": "$.policy_recommendations",
-          "terraform_files.$": "$.terraform_files",
-          "users.$": "$.users",
-          "user_api_usage.$": "$.user_api_usage",
-          "metadata.$": "$.metadata",
-          "iam_data.$": "$.iam_data",
-          "roles.$": "$.roles",
-          "query_details.$": "$.query_details",
-          "query_results_count.$": "$.query_results_count",
-          "terraform_files_count.$": "$.terraform_files_count",
-          "recommendations_count.$": "$.recommendations_count"
-        }
-        Next       = "AnalysisAndPRCompleted"
+        Resource = local.function_arns.generate_pr
+        Next     = "AnalysisAndPRCompleted"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
