@@ -18,6 +18,8 @@ def lambda_handler(event, context):
 
         logger.info(f"Received {len(policy_recommendations)} recommendations")
         logger.info(f"Received {len(file_modifications)} file modifications")
+        logger.info(f"DEBUG: Policy recommendations keys: {list(policy_recommendations.keys())}")
+        logger.info(f"DEBUG: File modifications keys: {list(file_modifications.keys())}")
         
         # Debug: Log what we received
         for file_path, file_data in file_modifications.items():
@@ -39,6 +41,8 @@ def lambda_handler(event, context):
             file_modifications, policy_recommendations
         )
 
+        logger.info(f"DEBUG: After filtering, have {len(filtered_modifications)} files with modifications")
+
         if not filtered_modifications:
             logger.info("No safe changes to apply after filtering")
             return create_response(False, "No safe changes to apply - all users have no API activity")
@@ -47,6 +51,8 @@ def lambda_handler(event, context):
         processed_modifications = apply_all_terraform_modifications(
             filtered_modifications, policy_recommendations
         )
+
+        logger.info(f"DEBUG: After processing, have {len(processed_modifications)} files with actual changes")
 
         if not processed_modifications:
             logger.info("No actual changes to apply after processing")
@@ -98,11 +104,16 @@ def filter_safe_modifications(file_modifications, policy_recommendations):
     """Filter out modifications that would remove access when no API calls exist"""
     safe_modifications = {}
     
+    logger.info(f"DEBUG: Starting filter_safe_modifications with {len(file_modifications)} files")
+    logger.info(f"DEBUG: Policy recommendations: {list(policy_recommendations.keys())}")
+    
     for file_path, file_data in file_modifications.items():
+        logger.info(f"DEBUG: Processing file {file_path} with {len(file_data.get('changes', []))} changes")
         safe_changes = []
         
         for change in file_data.get('changes', []):
             policy_name = change.get('policy_name')
+            logger.info(f"DEBUG: Processing change for policy {policy_name}")
             
             # Find the user recommendation that corresponds to this policy
             # by looking for a recommendation that references this policy name
@@ -110,11 +121,13 @@ def filter_safe_modifications(file_modifications, policy_recommendations):
             user_name = None
             
             for username, rec in policy_recommendations.items():
+                logger.info(f"DEBUG: Checking user {username} for policy {policy_name}")
                 policy_details = rec.get('policy_details', [])
                 for policy_detail in policy_details:
                     if policy_detail.get('terraform_resource_name') == policy_name:
                         user_rec = rec
                         user_name = username
+                        logger.info(f"DEBUG: Found user {user_name} for policy {policy_name}")
                         break
                 if user_rec:
                     break
@@ -125,6 +138,7 @@ def filter_safe_modifications(file_modifications, policy_recommendations):
                 continue
                 
             used_actions = user_rec.get('used_actions', [])
+            logger.info(f"DEBUG: User {user_name} has {len(used_actions)} used actions: {used_actions}")
             
             if change['type'] == 'policy_removal':
                 # Only allow removal if user has SOME used actions (meaning they had API activity)
@@ -207,41 +221,183 @@ def apply_policy_optimization_to_content(content, change):
     """Apply policy optimization by replacing the action list"""
     policy_name = change['policy_name']
     new_actions = change['new_actions']
+
+    logger.info(f"DEBUG: Looking for policy block: '{policy_name}'")
     
-    # Pattern to find the policy resource block
-    pattern = rf'(resource\s+"aws_iam_user_policy"\s+"{re.escape(policy_name)}"\s*\{{[^}}]*?Action\s*=\s*\[)[^\]]*(\][^}}]*?\}})'
+    # Parse the content into blocks
+    blocks = parse_terraform_blocks(content)
+    logger.info(f"Found {len(blocks)} Terraform blocks")
     
-    # Create new action list
-    formatted_actions = ',\n          '.join([f'"{action}"' for action in new_actions])
-    new_action_block = f'\\1\n          {formatted_actions}\n        \\2'
+    # Find the specific policy block we want to modify
+    target_block = None
+    for block in blocks:
+        if (block['type'] == 'resource' and 
+            block['resource_type'] == 'aws_iam_user_policy' and 
+            block['name'] == policy_name):
+            target_block = block
+            break
     
-    # Apply the replacement
-    modified_content = re.sub(pattern, new_action_block, content, flags=re.DOTALL)
+    if not target_block:
+        logger.warning(f"Policy block for {policy_name} NOT FOUND in content")
+        return content
     
-    if modified_content == content:
-        logger.warning(f"Policy optimization for {policy_name} didn't change content")
-    else:
-        logger.info(f"Successfully optimized policy {policy_name}")
+    logger.info(f"Found policy block for {policy_name}")
     
+    # Modify the Action arrays in this block
+    modified_block = modify_policy_actions(target_block, new_actions)
+    
+    # Rebuild the content with the modified block
+    modified_content = rebuild_terraform_content(blocks, target_block, modified_block)
+    
+    logger.info(f"Successfully optimized policy {policy_name}")
     return modified_content
+
+def parse_terraform_blocks(content):
+    """Parse Terraform content into structured blocks"""
+    blocks = []
+    lines = content.split('\n')
+    current_block = None
+    brace_count = 0
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Start of a resource block
+        if stripped.startswith('resource '):
+            if current_block:
+                blocks.append(current_block)
+            
+            # Parse resource declaration
+            parts = stripped.split('"')
+            if len(parts) >= 4:
+                resource_type = parts[1]
+                resource_name = parts[3]
+                
+                current_block = {
+                    'type': 'resource',
+                    'resource_type': resource_type,
+                    'name': resource_name,
+                    'lines': [line],
+                    'start_line': len(blocks)
+                }
+                brace_count = 1
+            else:
+                current_block = {
+                    'type': 'unknown',
+                    'lines': [line],
+                    'start_line': len(blocks)
+                }
+                brace_count = 1
+        elif current_block:
+            current_block['lines'].append(line)
+            
+            # Count braces
+            for char in line:
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        # End of block
+                        blocks.append(current_block)
+                        current_block = None
+                        break
+        else:
+            # Lines outside of blocks
+            if stripped:
+                blocks.append({
+                    'type': 'content',
+                    'lines': [line],
+                    'start_line': len(blocks)
+                })
+    
+    # Add any remaining block
+    if current_block:
+        blocks.append(current_block)
+    
+    return blocks
+
+def modify_policy_actions(block, new_actions):
+    """Modify the Action arrays in a policy block"""
+    modified_lines = []
+    in_action_array = False
+    action_array_start = None
+    
+    for line in block['lines']:
+        stripped = line.strip()
+        
+        # Check if this line starts an Action array
+        if 'Action' in stripped and '[' in stripped:
+            in_action_array = True
+            action_array_start = len(modified_lines)
+            
+            # Find the opening bracket
+            bracket_pos = stripped.find('[')
+            prefix = stripped[:bracket_pos + 1]
+            
+            # Create new action list
+            formatted_actions = ',\n          '.join([f'"{action}"' for action in new_actions])
+            new_line = f'{prefix}\n          {formatted_actions}\n        ]'
+            modified_lines.append(new_line)
+            
+        elif in_action_array:
+            # Skip lines until we find the closing bracket
+            if ']' in stripped:
+                in_action_array = False
+                # Don't add this line since we already added the closing bracket
+            # Skip all other lines in the action array
+        else:
+            modified_lines.append(line)
+    
+    # Create modified block
+    modified_block = block.copy()
+    modified_block['lines'] = modified_lines
+    return modified_block
+
+def rebuild_terraform_content(blocks, original_block, modified_block):
+    """Rebuild the Terraform content with the modified block"""
+    lines = []
+    
+    for block in blocks:
+        if block == original_block:
+            # Use the modified block instead
+            lines.extend(modified_block['lines'])
+        else:
+            lines.extend(block['lines'])
+    
+    return '\n'.join(lines)
 
 def apply_policy_removal_to_content(content, change):
     """Remove entire policy block from content"""
     policy_name = change['policy_name']
     
     # Pattern to match the entire policy resource block
-    pattern = rf'resource\s+"aws_iam_user_policy"\s+"{re.escape(policy_name)}"\s*\{{[^}}]*?\}}\s*\}}\s*\n*'
+    pattern = (
+        rf'resource\s+"aws_iam_user_policy"\s+"{re.escape(policy_name)}"\s*\{{'
+        r'[\s\S]*?'  # match everything inside the block
+        r'\}}\s*'    # closing brace
+    )
+    
+    # Debug: Check if the policy block exists at all
+    policy_block_pattern = rf'resource\s+"aws_iam_user_policy"\s+"{re.escape(policy_name)}"'
+    if re.search(policy_block_pattern, content):
+        logger.info(f"Found policy block for {policy_name}")
+    else:
+        logger.warning(f"Policy block for {policy_name} NOT FOUND in content")
+        # Show what policy blocks ARE in the content
+        all_policies = re.findall(r'resource\s+"aws_iam_user_policy"\s+"([^"]+)"', content)
+        logger.info(f"Available policy blocks in content: {all_policies}")
     
     # Remove the policy block
-    modified_content = re.sub(pattern, '\n', content, flags=re.DOTALL)
+    modified_content, count = re.subn(pattern, '\n', content, flags=re.DOTALL)
     
     # Clean up multiple consecutive newlines
     modified_content = re.sub(r'\n{3,}', '\n\n', modified_content)
     
-    if modified_content == content:
-        logger.warning(f"Policy removal for {policy_name} didn't change content")
+    if count == 0:
+        logger.warning(f"Policy removal for {policy_name} didn't change content. Regex did not match.")
     else:
-        logger.info(f"Successfully removed policy {policy_name}")
+        logger.info(f"Successfully removed policy {policy_name} (removed {count} block(s))")
     
     return modified_content
 
