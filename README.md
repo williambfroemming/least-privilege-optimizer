@@ -1,63 +1,130 @@
-# Least Privilege Optimizer (Prototype)
+# Least Privilege Optimizer
 
-This project is a prototype designed to demonstrate how AWS IAM permissions can be automatically analyzed and optimized to follow the principle of least privilege, based on actual usage.
-
----
-
-## Project Goals
-
-- Understand and visualize the gap between granted vs. used IAM permissions
-- Promote security by minimizing unnecessary AWS access
-- Automate policy generation and drift detection
+Automate the analysis, optimization, and application of least-privilege IAM policies for AWS users using Terraform and AWS Lambda. This project provides a reusable Terraform module and supporting infrastructure to help you continuously enforce least-privilege access in your AWS environment.
 
 ---
 
-## Current Functionality
+## Quick Start
 
-### 1. Infrastructure-as-Code (IaC)
+### 1. Clone the Repository
 
-The entire AWS environment is now managed using **Terraform**, including:
-
-- S3 buckets (CloudTrail logs, Athena query results, application data)
-- IAM users, roles, groups, and policies
-- GitHub Actions OIDC identity provider
-- Lambda function and execution role
-- CloudTrail configuration (except advanced selectors, which are managed manually)
-
-Terraform remote state is securely stored in an encrypted S3 bucket, with state locking via DynamoDB. This ensures reproducibility, consistency, and safe team collaboration.
-
---
-
-### 2. Simulated Role Activity
-
-To support least privilege analysis based on actual usage, this project includes a set of scripts under `scripts/` that simulate AWS activity for different IAM roles. These scripts assume their respective roles and perform relevant AWS operations that generate CloudTrail events for analysis.
-
-### Prerequisites
-
-- AWS CLI installed and authenticated as an identity allowed to assume the test roles
-- `jq` installed (`brew install jq` on macOS, or `sudo apt install jq` on Debian/Ubuntu)
-- Pre-created test infrastructure:
-  - `ucb-capstone-bucket` for S3 operations
-  - `ucb-capstone-athena-results` for Athena query output
-  - A Glue catalog with at least one database and table (e.g., `sampledb.elb_logs`)
-  - A log group such as `/aws/lambda/your-lambda` for CloudWatch testing (optional)
-
----
-
-### `simulate_test_data_engineer.sh`
-
-Simulates activity by the `test-data-engineer` role:
-
-- Uploads and deletes a file (`test.csv`) in `ucb-capstone-bucket`
-- Runs an Athena query (output to `s3://ucb-capstone-athena-results/athena-results/`)
-- Queries the Glue Data Catalog
-- Describes CloudWatch log groups
-- Describes EC2 instances
-
-**Usage:**
-
-```bash
-cd scripts
-chmod +x simulate_test_data_engineer.sh
-./simulate_test_data_engineer.sh
+```sh
+git clone <your-repo-url>
+cd least-privilege-optimizer
 ```
+
+### 2. Build Lambda Functions (if needed)
+
+```sh
+cd infra/terraform/modules/iam-parser/lambda/
+./build_all_lambdas.sh
+```
+
+### 3. Use the Module in Your Terraform
+
+Below is an example of how to import and configure the `iam-parser` module in your Terraform code:
+
+```hcl
+module "iam_analyzer" {
+  source  = "../../terraform/modules/iam-parser"
+  tf_path = "."
+
+  # Required variables
+  environment = "dev"
+  github_repo = "williambfroemming/least-privilege-optimizer"
+
+  # Step Function configuration
+  create_step_function = true
+  enable_daily_schedule = false  # Weekly is better for testing
+
+  # Testing settings
+  enable_test_mode      = true
+  force_lambda_rebuild  = true
+  force_destroy_bucket  = true
+
+  # CloudTrail configuration for testing
+  enable_cloudtrail_data_lake   = true
+  cloudtrail_retention_days     = 30
+
+  # GitHub token configuration
+  github_token_ssm_path = "/github-tokens/iam-analyzer"
+
+  # Automation settings
+  schedule_expression = "cron(0 6 ? * SUN *)"  # Weekly on Sundays
+
+  # Lambda configuration
+  lambda_timeout     = 300
+  lambda_memory_size = 256
+
+  # Storage configuration
+  s3_prefix             = "iam-analysis"
+  lambda_function_name  = "iam-analyzer"
+
+  # Monitoring
+  enable_monitoring  = true
+  log_retention_days = 7
+
+  # Tags
+  tags = {
+    Project     = "IAM-Analyzer"
+    ManagedBy   = "Terraform"
+    Environment = "dev"
+    Owner       = "ScopeDown Team"
+    Purpose     = "Automated IAM least privilege analysis"
+    Testing     = "true"
+  }
+}
+```
+
+---
+
+## Project Structure
+
+```
+infra/
+  terraform/                # Main Terraform root
+    modules/
+      iam-parser/           # The reusable IAM analysis module
+        lambda/             # Lambda source code and build scripts
+        ...
+    ...
+  sample-iac-app/           # Example app and frontend
+```
+
+---
+
+## Module Inputs & Outputs
+
+> **Note:** Please refer to `infra/terraform/modules/iam-parser/variables.tf` and `outputs.tf` for the full list. (You can also run `terraform-docs` for auto-generated documentation.)
+
+### Inputs
+
+- `environment` (string): Deployment environment (e.g., dev, prod)
+- `github_repo` (string): GitHub repository for PR automation
+- ... _(add more as needed)_
+
+### Outputs
+
+- _(List outputs here)_
+
+---
+
+## Development & Contribution
+
+- Fork and clone the repo
+- Build Lambda zips with `./build_all_lambdas.sh` before deploying
+- Open issues or PRs for bugs, features, or questions
+
+---
+
+## License
+
+MIT
+
+---
+
+## Contributors
+
+- Aish Joshi
+- David Kocen
+- Matt Neith
