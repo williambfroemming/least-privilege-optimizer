@@ -8,26 +8,16 @@ resource "aws_iam_user_policy" "alice_analyst_policy" {
       {
         Sid      = "OverlyPermissiveReadAndWrite",
         Effect   = "Allow",
-        Action   = [
-          "s3:*",                         # Full S3 access
-          "athena:*",                     # All Athena actions
-          "glue:*",                       # All Glue actions (overkill for most analysts)
-          "cloudwatch:Get*",              # OK
-          "cloudwatch:PutMetricData",     # Write perms analysts shouldn't need
-          "dynamodb:Scan",                # Too broad for sensitive data
-          "kms:Decrypt",                  # Dangerous without restrictions
-          "iam:List*",                    # Allows recon
-          "iam:Get*",                     # More recon
-          "lambda:InvokeFunction",        # Could be misused
-          "sts:AssumeRole"                # Very risky unless scoped tightly
-        ],
+Action   = [
+          "iam:ListRoles",
+          "s3:GetBucketLocation",
+          "s3:PutObject"
+        ]
         Resource = "*"
       }
     ]
   })
 }
-
-
 resource "aws_iam_user_policy" "bob_dev_policy" {
   name = "bob-dev-test-policy"
   user = aws_iam_user.bob_dev_test.name
@@ -38,22 +28,19 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
       {
         Sid: "LambdaOverreach",
         Effect: "Allow",
-        Action: [
-          "lambda:*"                          # Too much
-        ],
+Action: [
+          "iam:ListRoles",
+          "lambda:ListFunctions20150331"
+        ]
         Resource: "*"
       },
       {
         Sid: "S3FullBucketAccess",
         Effect: "Allow",
-        Action: [
-          "s3:PutObject",
-          "s3:GetObject",
-          "s3:ListBucket",
-          "s3:DeleteObject",                  # Excessive
-          "s3:PutBucketPolicy",               # Definitely too much
-          "s3:GetBucketAcl"
-        ],
+Action: [
+          "iam:ListRoles",
+          "lambda:ListFunctions20150331"
+        ]
         Resource: [
           "arn:aws:s3:::ucb-capstone-bucket",
           "arn:aws:s3:::ucb-capstone-bucket/*"
@@ -62,44 +49,37 @@ resource "aws_iam_user_policy" "bob_dev_policy" {
       {
         Sid: "IAMReconAccess",
         Effect: "Allow",
-        Action: [
-          "iam:GetRole",
-          "iam:ListRoles"
-        ],
+Action: [
+          "iam:ListRoles",
+          "lambda:ListFunctions20150331"
+        ]
         Resource: "*"
       },
       {
         Sid: "CloudWatchLogsAccess",
         Effect: "Allow",
-        Action: [
-          "logs:DescribeLogGroups",
-          "logs:GetLogEvents",
-          "logs:FilterLogEvents",
-          "logs:PutLogEvents"                # Not always needed
-        ],
+Action: [
+          "iam:ListRoles",
+          "lambda:ListFunctions20150331"
+        ]
         Resource: "*"
       },
       {
         Sid: "ECSAndECRAccess",
         Effect: "Allow",
-        Action: [
-          "ecs:ListClusters",
-          "ecs:DescribeTasks",
-          "ecr:GetAuthorizationToken",
-          "ecr:DescribeRepositories"
-        ],
+Action: [
+          "iam:ListRoles",
+          "lambda:ListFunctions20150331"
+        ]
         Resource: "*"
       }
     ]
   })
 }
-
-
 resource "aws_iam_user_policy_attachment" "charlie_admin_access" {
   user       = aws_iam_user.charlie_admin_test.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
-
 resource "aws_iam_user_policy" "dave_observer_policy" {
   name = "dave-observer-test-policy"
   user = aws_iam_user.dave_observer_test.name
