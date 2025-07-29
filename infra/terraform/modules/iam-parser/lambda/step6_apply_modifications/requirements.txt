@@ -1,0 +1,2 @@
+# step6_apply_modifications/requirements.txt
+# No external dependencies needed - only uses standard library 

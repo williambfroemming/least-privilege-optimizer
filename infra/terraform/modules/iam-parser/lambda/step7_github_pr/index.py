@@ -1,4 +1,4 @@
-# step6_github_pr/index.py - UPDATED VERSION - PRESERVE ACCESS WHEN NO API CALLS
+# step7_github_pr/index.py - Create GitHub PR with processed modifications
 
 import os
 import json
@@ -6,38 +6,34 @@ import base64
 import boto3
 import urllib3
 import logging
-import re
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 def lambda_handler(event, context):
-    """Create GitHub PR with actual Terraform file modifications"""
+    """Create GitHub PR with processed Terraform file modifications"""
     
     try:
-        # Get input from previous steps
+        # Get input from step 6
+        processed_modifications = event.get('processed_modifications', {})
         policy_recommendations = event.get('policy_recommendations', {})
-        file_modifications = event.get('file_modifications', {})
         users = event.get('users', [])
+        summary = event.get('summary', {})
 
-        logger.info(f"Received {len(policy_recommendations)} recommendations")
-        logger.info(f"Received {len(file_modifications)} file modifications")
+        logger.info(f"Received {len(processed_modifications)} processed modifications")
+        logger.info(f"Summary: {summary}")
         
         # Debug: Log what we received
-        for file_path, file_data in file_modifications.items():
+        for file_path, file_data in processed_modifications.items():
             changes_count = len(file_data.get('changes', []))
             logger.info(f"File {file_path}: {changes_count} changes")
             for i, change in enumerate(file_data.get('changes', [])):
                 logger.info(f"  Change {i+1}: {change.get('type')} - {change.get('policy_name')}")
 
-        if not policy_recommendations:
-            logger.info("No recommendations found - skipping PR")
-            return create_response(False, "No recommendations to apply")
-
-        if not file_modifications:
-            logger.info("No file modifications found - skipping PR")
-            return create_response(False, "No file modifications found")
+        if not processed_modifications:
+            logger.info("No processed modifications found - skipping PR")
+            return create_response(False, "No modifications to commit")
 
         # Get environment variables
         github_repo = os.environ['GITHUB_REPO']
@@ -51,27 +47,9 @@ def lambda_handler(event, context):
         )
         github_token = response['Parameter']['Value']
 
-        # Apply actual modifications to file content BEFORE creating PR
-        # Filter out changes that would remove access when no API calls exist
-        filtered_modifications = filter_safe_modifications(
-            file_modifications, policy_recommendations
-        )
-
-        if not filtered_modifications:
-            logger.info("No safe changes to apply after filtering")
-            return create_response(False, "No safe changes to apply - all users have no API activity")
-
-        processed_modifications = apply_all_terraform_modifications(
-            filtered_modifications, policy_recommendations
-        )
-
-        if not processed_modifications:
-            logger.info("No actual changes to apply after processing")
-            return create_response(False, "No changes to apply after processing")
-
         # Create PR with the processed modifications
         pr_result = create_github_pr_with_changes(
-            github_repo, github_token, policy_recommendations, users, processed_modifications
+            github_repo, github_token, policy_recommendations, users, processed_modifications, summary
         )
 
         logger.info(f"PR creation result: {pr_result['created']}")
@@ -83,79 +61,8 @@ def lambda_handler(event, context):
         )
 
     except Exception as e:
-        logger.error(f"Error in step 6: {e}")
+        logger.error(f"Error in step 7: {e}")
         return create_response(False, f"Error: {str(e)}")
-
-def filter_safe_modifications(file_modifications, policy_recommendations):
-    """Filter out modifications that would remove access when no API calls exist"""
-    safe_modifications = {}
-    
-    for file_path, file_data in file_modifications.items():
-        safe_changes = []
-        
-        for change in file_data.get('changes', []):
-            policy_name = change.get('policy_name')
-            
-            # Find the user recommendation that corresponds to this policy
-            # by looking for a recommendation that references this policy name
-            user_rec = None
-            user_name = None
-            
-            for username, rec in policy_recommendations.items():
-                policy_details = rec.get('policy_details', [])
-                for policy_detail in policy_details:
-                    if policy_detail.get('terraform_resource_name') == policy_name:
-                        user_rec = rec
-                        user_name = username
-                        break
-                if user_rec:
-                    break
-            
-            if not user_rec:
-                logger.warning(f"Could not find recommendation for policy {policy_name} - allowing change")
-                safe_changes.append(change)
-                continue
-                
-            used_actions = user_rec.get('used_actions', [])
-            
-            if change['type'] == 'policy_removal':
-                # Only allow removal if user has SOME used actions (meaning they had API activity)
-                # If used_actions is empty, it means no API calls were found - preserve access
-                if used_actions:
-                    safe_changes.append(change)
-                    logger.info(f"Allowing removal of {policy_name} - user {user_name} has {len(used_actions)} used actions")
-                else:
-                    logger.info(f"SKIPPING removal of {policy_name} - user {user_name} has no API activity, preserving access")
-                    
-            elif change['type'] == 'policy_optimization':
-                # Only allow optimization if user has used actions
-                # If no used actions, preserve the original broad permissions
-                if used_actions:
-                    safe_changes.append(change)
-                    logger.info(f"Allowing optimization of {policy_name} - user {user_name} has {len(used_actions)} used actions")
-                else:
-                    logger.info(f"SKIPPING optimization of {policy_name} - user {user_name} has no API activity, preserving original permissions")
-            else:
-                # Allow other types of changes
-                safe_changes.append(change)
-        
-        # Only include files that have safe changes
-        if safe_changes:
-            safe_modifications[file_path] = {
-                **file_data,
-                'changes': safe_changes
-            }
-            logger.info(f"File {file_path}: {len(safe_changes)} safe changes (was {len(file_data.get('changes', []))})")
-        else:
-            logger.info(f"File {file_path}: No safe changes - all users have no API activity")
-    
-    logger.info(f"Filtered to {len(safe_modifications)} files with safe modifications")
-    return safe_modifications
-
-def extract_username_from_policy_name(policy_name):
-    """Extract username from policy name by matching against actual recommendation keys"""
-    # Instead of guessing the username format, find the best match from actual recommendations
-    return None  # We'll handle this differently in the calling function
 
 def create_response(pr_created, pr_message, pr_result=None):
     """Create standardized response"""
@@ -175,93 +82,8 @@ def create_response(pr_created, pr_message, pr_result=None):
     
     return response
 
-def apply_all_terraform_modifications(file_modifications, policy_recommendations):
-    """Apply all the planned changes to create actual modified content"""
-    processed_modifications = {}
-    
-    for file_path, file_data in file_modifications.items():
-        changes = file_data.get('changes', [])
-        if not changes:
-            logger.info(f"No changes for {file_path}")
-            continue
-            
-        logger.info(f"Processing {len(changes)} changes for {file_path}")
-        
-        # Start with original content
-        current_content = file_data['original_content']
-        
-        # Apply each change
-        for change in changes:
-            if change['type'] == 'policy_optimization':
-                current_content = apply_policy_optimization_to_content(
-                    current_content, change
-                )
-                logger.info(f"Applied optimization for {change['policy_name']}")
-                
-            elif change['type'] == 'policy_removal':
-                current_content = apply_policy_removal_to_content(
-                    current_content, change
-                )
-                logger.info(f"Applied removal for {change['policy_name']}")
-        
-        # Only include if content actually changed
-        if current_content != file_data['original_content']:
-            processed_modifications[file_path] = {
-                'original_content': file_data['original_content'],
-                'modified_content': current_content,
-                'changes': changes
-            }
-            logger.info(f"File {file_path} has actual content changes")
-        else:
-            logger.warning(f"File {file_path} has no actual content changes after processing")
-    
-    logger.info(f"Processed {len(processed_modifications)} files with actual changes")
-    return processed_modifications
-
-def apply_policy_optimization_to_content(content, change):
-    """Apply policy optimization by replacing the action list"""
-    policy_name = change['policy_name']
-    new_actions = change['new_actions']
-    
-    # Pattern to find the policy resource block
-    pattern = rf'(resource\s+"aws_iam_user_policy"\s+"{re.escape(policy_name)}"\s*\{{[^}}]*?Action\s*=\s*\[)[^\]]*(\][^}}]*?\}})'
-    
-    # Create new action list
-    formatted_actions = ',\n          '.join([f'"{action}"' for action in new_actions])
-    new_action_block = f'\\1\n          {formatted_actions}\n        \\2'
-    
-    # Apply the replacement
-    modified_content = re.sub(pattern, new_action_block, content, flags=re.DOTALL)
-    
-    if modified_content == content:
-        logger.warning(f"Policy optimization for {policy_name} didn't change content")
-    else:
-        logger.info(f"Successfully optimized policy {policy_name}")
-    
-    return modified_content
-
-def apply_policy_removal_to_content(content, change):
-    """Remove entire policy block from content"""
-    policy_name = change['policy_name']
-    
-    # Pattern to match the entire policy resource block
-    pattern = rf'resource\s+"aws_iam_user_policy"\s+"{re.escape(policy_name)}"\s*\{{[^}}]*?\}}\s*\}}\s*\n*'
-    
-    # Remove the policy block
-    modified_content = re.sub(pattern, '\n', content, flags=re.DOTALL)
-    
-    # Clean up multiple consecutive newlines
-    modified_content = re.sub(r'\n{3,}', '\n\n', modified_content)
-    
-    if modified_content == content:
-        logger.warning(f"Policy removal for {policy_name} didn't change content")
-    else:
-        logger.info(f"Successfully removed policy {policy_name}")
-    
-    return modified_content
-
-def create_github_pr_with_changes(repo, token, recommendations, users, file_modifications):
-    """Create GitHub PR with the actual file changes"""
+def create_github_pr_with_changes(repo, token, recommendations, users, processed_modifications, summary):
+    """Create GitHub PR with the processed file changes"""
     try:
         http = urllib3.PoolManager()
         base_url = "https://api.github.com"
@@ -291,10 +113,10 @@ def create_github_pr_with_changes(repo, token, recommendations, users, file_modi
 
         logger.info(f"Created branch {branch_name}")
 
-        # Commit files with actual changes
+        # Commit files with processed modifications
         files_committed = []
-        for file_path, file_data in file_modifications.items():
-            # These should already have different content
+        for file_path, file_data in processed_modifications.items():
+            # These should already have different content from step 6
             success = commit_file_to_github(
                 http, headers, repo, branch_name, file_path,
                 file_data['modified_content'], file_data['changes']
@@ -313,10 +135,14 @@ def create_github_pr_with_changes(repo, token, recommendations, users, file_modi
             }
 
         # Create pull request
-        pr_description = generate_detailed_pr_description(recommendations, users, files_committed, file_modifications)
+        pr_description = generate_detailed_pr_description(recommendations, users, files_committed, processed_modifications, summary)
+
+        # Only count users who actually have API activity and are being optimized
+        users_optimized = len([r for r in recommendations.values() 
+                              if r.get('recommendation') == 'optimize_permissions' and r.get('used_actions')])
 
         pr_data = {
-            "title": f"IAM Least Privilege: Optimize {len([r for r in recommendations.values() if r.get('recommendation') == 'optimize_permissions' and r.get('used_actions')])} users with API activity",
+            "title": f"IAM Least Privilege: Optimize {users_optimized} users with API activity",
             "body": pr_description,
             "head": branch_name,
             "base": "main"
@@ -409,7 +235,7 @@ def get_existing_file_sha(http, headers, repo, file_path):
     except Exception:
         return ''
 
-def generate_detailed_pr_description(recommendations, users, files_committed, file_modifications):
+def generate_detailed_pr_description(recommendations, users, files_committed, processed_modifications, summary):
     """Generate comprehensive PR description"""
     # Only count users who actually have API activity and are being optimized
     users_optimized = len([r for r in recommendations.values() 
@@ -425,15 +251,17 @@ This PR implements least privilege IAM policies based on 30 days of CloudTrail a
 
 ### 📊 Summary
 - **Users optimized:** {users_optimized}
-- **Users preserved (no API activity):** {len([r for r in recommendations.values() if not r.get('used_actions', [])])}
+- **Users preserved (no API activity):** {summary.get('users_preserved', 0)}
 - **Unused permissions removed:** {total_unused}
 - **Terraform files modified:** {len(files_committed)}
+- **Policies optimized:** {summary.get('policies_optimized', 0)}
+- **Policies removed:** {summary.get('policies_removed', 0)}
 
 ### 📁 File Changes
 """
     
     for file_path in files_committed:
-        changes = file_modifications[file_path].get('changes', [])
+        changes = processed_modifications[file_path].get('changes', [])
         description += f"#### `{file_path}`\n"
         for change in changes:
             if change['type'] == 'policy_optimization':
@@ -481,4 +309,4 @@ This PR implements least privilege IAM policies based on 30 days of CloudTrail a
 ---
 *Generated automatically by IAM Least Privilege Analyzer*
 """
-    return description
+    return description 

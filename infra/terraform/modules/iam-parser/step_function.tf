@@ -81,12 +81,13 @@ resource "aws_cloudwatch_log_group" "step_function_logs" {
 # Local values for function ARNs
 locals {
   function_arns = var.create_lambda ? {
-    read_s3           = aws_lambda_function.iam_analyzer_functions["read-s3"].arn
-    start_cloudtrail  = aws_lambda_function.iam_analyzer_functions["start-cloudtrail"].arn
-    check_cloudtrail  = aws_lambda_function.iam_analyzer_functions["check-cloudtrail"].arn
-    fetch_terraform   = aws_lambda_function.iam_analyzer_functions["fetch-terraform"].arn
-    parse_policies    = aws_lambda_function.iam_analyzer_functions["parse-policies"].arn
-    generate_pr       = aws_lambda_function.iam_analyzer_functions["generate-pr"].arn
+    read_s3              = aws_lambda_function.iam_analyzer_functions["read-s3"].arn
+    start_cloudtrail     = aws_lambda_function.iam_analyzer_functions["start-cloudtrail"].arn
+    check_cloudtrail     = aws_lambda_function.iam_analyzer_functions["check-cloudtrail"].arn
+    fetch_terraform      = aws_lambda_function.iam_analyzer_functions["fetch-terraform"].arn
+    parse_policies       = aws_lambda_function.iam_analyzer_functions["parse-policies"].arn
+    apply_modifications  = aws_lambda_function.iam_analyzer_functions["apply-modifications"].arn
+    github_pr            = aws_lambda_function.iam_analyzer_functions["github-pr"].arn
   } : {}
 }
 
@@ -240,7 +241,7 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
       ParseTerraformPolicies = {
         Type     = "Task"
         Resource = local.function_arns.parse_policies
-        Next     = "CheckRecommendations"
+        Next     = "ApplyModifications"
         Retry = [
           {
             ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
@@ -257,23 +258,44 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         ]
       }
 
-      # Check if we have recommendations to create a PR for
-      CheckRecommendations = {
+      # Step 6: Apply modifications to Terraform files
+      ApplyModifications = {
+        Type     = "Task"
+        Resource = local.function_arns.apply_modifications
+        Next     = "CheckModifications"
+        Retry = [
+          {
+            ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
+            IntervalSeconds = 2
+            MaxAttempts     = 3
+            BackoffRate     = 2.0
+          }
+        ]
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            Next        = "HandleError"
+          }
+        ]
+      }
+
+      # Check if we have modifications to create a PR for
+      CheckModifications = {
         Type = "Choice"
         Choices = [
           {
-            Variable = "$.recommendations_count"
-            NumericGreaterThan = 0
+            Variable = "$.modifications_applied"
+            BooleanEquals = true
             Next = "GenerateGitHubPR"
           }
         ]
-        Default = "NoRecommendationsFound"
+        Default = "NoModificationsFound"
       }
 
-      # Step 6: Generate GitHub PR (dedicated function)
+      # Step 7: Generate GitHub PR (dedicated function)
       GenerateGitHubPR = {
         Type     = "Task"
-        Resource = local.function_arns.generate_pr
+        Resource = local.function_arns.github_pr
         Next     = "AnalysisAndPRCompleted"
         Retry = [
           {
@@ -292,6 +314,16 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         ]
       }
 
+      # No modifications found
+      NoModificationsFound = {
+        Type = "Pass"
+        Result = {
+          message = "IAM analysis completed - no safe modifications to apply"
+          workflow_status = "complete_no_modifications"
+        }
+        End = true
+      }
+
       # Analysis completed with PR created
       AnalysisAndPRCompleted = {
         Type = "Pass"
@@ -308,16 +340,6 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
         Result = {
           message = "IAM analysis completed but PR generation failed"
           workflow_status = "complete_no_pr"
-        }
-        End = true
-      }
-
-      # No recommendations found
-      NoRecommendationsFound = {
-        Type = "Pass"
-        Result = {
-          message = "IAM analysis completed - no optimization recommendations found"
-          workflow_status = "complete_no_recommendations"
         }
         End = true
       }
