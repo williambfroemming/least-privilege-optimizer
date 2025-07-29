@@ -318,40 +318,65 @@ def parse_terraform_blocks(content):
     return blocks
 
 def modify_policy_actions(block, new_actions):
-    """Modify the Action arrays in a policy block"""
-    modified_lines = []
-    in_action_array = False
-    action_array_start = None
+    """Replace the entire policy content with a single optimized policy statement"""
+    # Create a new optimized policy block
+    policy_name = block['name']
+    
+    logger.info(f"Optimizing policy {policy_name} with actions: {new_actions}")
+    
+    # Extract the user name from the original block
+    user_name = None
+    original_policy_name = None
     
     for line in block['lines']:
-        stripped = line.strip()
+        # Extract user name
+        user_match = re.search(r'user\s*=\s*aws_iam_user\.([^.\s]+)\.name', line)
+        if user_match:
+            user_name = user_match.group(1)
         
-        # Check if this line starts an Action array
-        if 'Action' in stripped and '[' in stripped:
-            in_action_array = True
-            action_array_start = len(modified_lines)
-            
-            # Find the opening bracket
-            bracket_pos = stripped.find('[')
-            prefix = stripped[:bracket_pos + 1]
-            
-            # Create new action list
-            formatted_actions = ',\n          '.join([f'"{action}"' for action in new_actions])
-            new_line = f'{prefix}\n          {formatted_actions}\n        ]'
-            modified_lines.append(new_line)
-            
-        elif in_action_array:
-            # Skip lines until we find the closing bracket
-            if ']' in stripped:
-                in_action_array = False
-                # Don't add this line since we already added the closing bracket
-            # Skip all other lines in the action array
-        else:
-            modified_lines.append(line)
+        # Extract original policy name
+        name_match = re.search(r'name\s*=\s*["\']([^"\']+)["\']', line)
+        if name_match:
+            original_policy_name = name_match.group(1)
     
-    # Create modified block
+    if not user_name:
+        logger.warning(f"Could not extract user name from policy {policy_name}")
+        user_name = policy_name.replace('_policy', '')  # Fallback
+    
+    if not original_policy_name:
+        logger.warning(f"Could not extract original policy name from policy {policy_name}")
+        original_policy_name = policy_name  # Fallback
+    
+    logger.info(f"Extracted user name: {user_name}, original policy name: {original_policy_name} for policy {policy_name}")
+    
+    # Format the actions list
+    formatted_actions = ',\n          '.join([f'"{action}"' for action in new_actions])
+    
+    # Create the new policy content with a single statement, preserving the original policy name
+    new_policy_content = f'''resource "aws_iam_user_policy" "{policy_name}" {{
+  name = "{original_policy_name}"
+  user = aws_iam_user.{user_name}.name
+
+  policy = jsonencode({{
+    Version = "2012-10-17"
+    Statement = [
+      {{
+        Sid    = "LeastPrivilegeAccess"
+        Effect = "Allow"
+        Action = [
+          {formatted_actions}
+        ]
+        Resource = "*"
+      }}
+    ]
+  }})
+}}'''
+    
+    logger.info(f"Created new policy content for {policy_name} with {len(new_actions)} actions")
+    
+    # Create modified block with the new content
     modified_block = block.copy()
-    modified_block['lines'] = modified_lines
+    modified_block['lines'] = new_policy_content.split('\n')
     return modified_block
 
 def rebuild_terraform_content(blocks, original_block, modified_block):
