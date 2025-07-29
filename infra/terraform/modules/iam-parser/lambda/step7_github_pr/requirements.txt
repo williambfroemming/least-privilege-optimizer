@@ -1,0 +1,3 @@
+# step7_github_pr/requirements.txt
+boto3>=1.26.0
+urllib3>=1.26.0 

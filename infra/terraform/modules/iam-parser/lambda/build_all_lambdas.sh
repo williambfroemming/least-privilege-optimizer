@@ -15,7 +15,8 @@ DIRS=(
     "step3_query_status"
     "step4_github_fetch"
     "step5_parse_policies"
-    "step6_github_pr"
+    "step6_apply_modifications"
+    "step7_github_pr"
 )
 
 # Function names that map to Terraform locals
@@ -25,7 +26,8 @@ FUNCTION_KEYS=(
     "check-cloudtrail"
     "fetch-terraform"
     "parse-policies"
-    "generate-pr"
+    "apply-modifications"
+    "github-pr"
 )
 
 create_deployment_package() {

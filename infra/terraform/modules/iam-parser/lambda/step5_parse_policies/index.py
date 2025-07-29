@@ -94,8 +94,8 @@ def generate_recommendations_from_mapping(user_policy_mapping, user_api_usage, t
             actions = extract_actions_from_policy_json(policy.get('policy_json', ''))
             current_actions.update(actions)
             
-            # Get the policy resource name from the terraform block
-            tf_resource_name = extract_resource_name_from_block(policy.get('policy_block', ''))
+            # Use the policy resource name that was already extracted in step 4
+            tf_resource_name = policy.get('policy_resource_name', 'unknown')
             
             policy_details.append({
                 'type': 'inline',
@@ -113,8 +113,8 @@ def generate_recommendations_from_mapping(user_policy_mapping, user_api_usage, t
             actions = get_managed_policy_actions(policy['policy_arn'])
             current_actions.update(actions)
             
-            # Get the attachment resource name
-            tf_resource_name = extract_resource_name_from_block(policy.get('attachment_block', ''))
+            # Use the attachment resource name that was already extracted in step 4
+            tf_resource_name = policy.get('attachment_resource_name', 'unknown')
             
             policy_details.append({
                 'type': 'attached',

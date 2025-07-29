@@ -35,12 +35,19 @@ locals {
       directory    = "step5_parse_policies"
       description  = "Parse Terraform policies"
     }
-    "generate-pr" = {
+    "apply-modifications" = {
+      handler      = "index.lambda_handler"
+      timeout      = 180
+      memory_size  = 512
+      directory    = "step6_apply_modifications"
+      description  = "Apply safe modifications to Terraform files"
+    }
+    "github-pr" = {
       handler      = "index.lambda_handler"
       timeout      = 300
       memory_size  = 512
-      directory    = "step6_github_pr"
-      description  = "Generate GitHub PR"
+      directory    = "step7_github_pr"
+      description  = "Create GitHub PR with modifications"
     }
   }
 }
@@ -65,7 +72,8 @@ resource "null_resource" "lambda_build_all" {
     step3_source = fileexists("${path.module}/lambda/step3_query_status/index.py") ? filebase64sha256("${path.module}/lambda/step3_query_status/index.py") : ""
     step4_source = fileexists("${path.module}/lambda/step4_github_fetch/index.py") ? filebase64sha256("${path.module}/lambda/step4_github_fetch/index.py") : ""
     step5_source = fileexists("${path.module}/lambda/step5_parse_policies/index.py") ? filebase64sha256("${path.module}/lambda/step5_parse_policies/index.py") : ""
-    step6_source = fileexists("${path.module}/lambda/step6_github_pr/index.py") ? filebase64sha256("${path.module}/lambda/step6_github_pr/index.py") : ""
+    step6_source = fileexists("${path.module}/lambda/step6_apply_modifications/index.py") ? filebase64sha256("${path.module}/lambda/step6_apply_modifications/index.py") : ""
+    step7_source = fileexists("${path.module}/lambda/step7_github_pr/index.py") ? filebase64sha256("${path.module}/lambda/step7_github_pr/index.py") : ""
   }
 }
 
