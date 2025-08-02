@@ -407,9 +407,6 @@ This project was developed as part of the UC Berkeley Master of Information and 
 - **David Kocen**
 - **Matt Neith**
 
-
-README.md generated with the help of GitHub Copilot AI
-
 ---
 
 ##  License
@@ -427,6 +424,8 @@ MIT License - see [LICENSE](./LICENSE) file for details.
 *"ScopeDown: Intelligent AWS IAM Least Privilege Automation"*
 
 This project demonstrates the practical application of cybersecurity principles, cloud computing technologies, and automation frameworks to solve real-world security challenges in enterprise environments.
+
+Code and documentation generated with the help of GitHub Copilot AI
 
 ---
 
