@@ -51,15 +51,9 @@ ScopeDown employs a serverless architecture designed for scalability:
 
 ### **Multi-Stage Processing Pipeline**
 
-```mermaid
-graph LR
-    A[Terraform Files] --> B[S3 Analysis Store]
-    B --> C[IAM Data Extraction]
-    C --> D[CloudTrail Query]
-    D --> E[Usage Analysis]
-    E --> F[Policy Optimization]
-    F --> G[GitHub PR Creation]
-    G --> H[Review & Merge]
+```
+Terraform Files → S3 Analysis Store → IAM Data Extraction → CloudTrail Query → 
+Usage Analysis → Policy Optimization → GitHub PR Creation → Review & Merge
 ```
 
 ### **Core Components**
