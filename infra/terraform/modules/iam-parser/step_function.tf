@@ -73,7 +73,7 @@ resource "aws_iam_role_policy" "step_function_logging_policy" {
 # CloudWatch Log Group for Step Function
 resource "aws_cloudwatch_log_group" "step_function_logs" {
   count             = var.create_step_function ? 1 : 0
-  name              = "/aws/stepfunctions/${local.name_prefix}-iam-analyzer"
+  name              = "/aws/stepfunctions/${local.name_prefix}-scopedown"
   retention_in_days = var.log_retention_days
   tags              = local.common_tags
 }
@@ -94,7 +94,7 @@ locals {
 # Step Function State Machine - FIXED with no problematic Parameters
 resource "aws_sfn_state_machine" "iam_analyzer" {
   count    = var.create_step_function && var.create_lambda ? 1 : 0
-  name     = "${local.name_prefix}-iam-analyzer"
+  name     = "${local.name_prefix}-scopedown"
   role_arn = aws_iam_role.step_function_role[0].arn
 
   logging_configuration {
@@ -369,7 +369,7 @@ resource "aws_sfn_state_machine" "iam_analyzer" {
 # EventBridge rule to trigger Step Function (optional)
 resource "aws_cloudwatch_event_rule" "daily_analysis" {
   count               = var.create_step_function && var.enable_daily_schedule ? 1 : 0
-  name                = "${local.name_prefix}-iam-analyzer-daily"
+  name                = "${local.name_prefix}-scopedown-daily"
   description         = "Trigger IAM analysis daily"
   schedule_expression = var.schedule_expression
 
@@ -387,7 +387,7 @@ resource "aws_cloudwatch_event_target" "step_function_target" {
 # EventBridge IAM role
 resource "aws_iam_role" "eventbridge_role" {
   count = var.create_step_function && var.enable_daily_schedule ? 1 : 0
-  name  = "${local.name_prefix}-iam-analyzer-eventbridge-role"
+  name  = "${local.name_prefix}-scopedown-eventbridge-role"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -407,7 +407,7 @@ resource "aws_iam_role" "eventbridge_role" {
 
 resource "aws_iam_role_policy" "eventbridge_step_function_policy" {
   count = var.create_step_function && var.enable_daily_schedule ? 1 : 0
-  name  = "${local.name_prefix}-iam-analyzer-eventbridge-stepfunction"
+  name  = "${local.name_prefix}-scopedown-eventbridge-stepfunction"
   role  = aws_iam_role.eventbridge_role[0].id
 
   policy = jsonencode({

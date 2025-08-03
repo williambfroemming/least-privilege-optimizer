@@ -24,11 +24,11 @@ resource "random_id" "suffix" {
 
 # Local values for consistent naming
 locals {
-  name_prefix = var.name_prefix != "" ? var.name_prefix : "iam-analyzer-${var.environment}-${random_id.suffix.hex}"
+  name_prefix = var.name_prefix != "" ? var.name_prefix : "scopedown-${var.environment}-${random_id.suffix.hex}"
   bucket_name = var.s3_bucket_name != null ? var.s3_bucket_name : "${local.name_prefix}-output"
   
   common_tags = merge(var.tags, {
-    Module      = "iam-parser"
+    Module      = "scopedown"
     Environment = var.environment
     CreatedBy   = "terraform"
     Timestamp   = timestamp()
