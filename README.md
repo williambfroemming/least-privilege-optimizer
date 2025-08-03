@@ -2,13 +2,13 @@
 
 **UC Berkeley MICS Capstone Project 2025**
 
-ScopeDown is an intelligent automation system that continuously enforces least privilege principles in cloud IAM—not just once, but as an ongoing security practice. Built as a comprehensive Terraform module with serverless architecture, ScopeDown automatically generates optimized IAM policy code changes and submits them as pull requests, integrating seamlessly into existing CI/CD pipelines and Infrastructure as Code workflows.
+ScopeDown is an intelligent automation system that continuously enforces least privilege principles in cloud IAM—not just once, but as an ongoing security practice. Built as a comprehensive Terraform module with serverless architecture, ScopeDown automatically generates optimized IAM policy code changes and submits them as pull requests, integrating seamlessly into existing CI/CD pipelines and Infrastructure as Code workflows. The scope of our project focused on users with AWS managed and inline policies attached to their attached to their IAM user identities, specifically analyzing permissions usage to recommend policy reductions based on actual activity captured in AWS CloudTrail.
 
 ## 🎯 The Business Problem
 
 In today's cloud-first world, IAM permissions are the keys to the kingdom. Yet organizations struggle with a critical security paradox:
 
-- **Most cloud IAM permissions go unused**, creating massive attack surfaces
+- **Most cloud IAM permissions go unused**, creating a massive attack surface
 - Security teams spend countless hours manually auditing permissions
 - Developers need quick access, leading to over-permissioned roles
 - Compliance audits reveal excessive privileges across production environments
@@ -75,7 +75,7 @@ Usage Analysis → Policy Optimization → GitHub PR Creation → Review & Merge
 
 #### **🧠 Step 5: Policy Intelligence (`parse-policies`)**
 - Compares granted permissions against actual API usage
-- Generates least-privilege recommendations using AWS Access Analyzer
+- Generates least-privilege recommendations
 - Creates modification plans with detailed change descriptions
 
 #### **✏️ Step 6: Safe Modifications (`apply-modifications`)**
@@ -321,7 +321,7 @@ least-privilege-optimizer/
 
 ### **Built-in Security Controls**
 
-- **Least Privilege by Design**: ScopeDown itself follows least privilege principles
+- **Least Privilege by Design**: ScopeDown itself follows least privilege principles ensuring the deployed infrastructure is accessing only necessary resources.
 - **Encryption at Rest**: All data encrypted using AWS managed encryption
 - **Audit Logging**: Comprehensive CloudTrail integration for all API calls
 - **Network Security**: VPC-compatible deployment with private subnet support
